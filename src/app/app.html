@@ -1,0 +1,13 @@
+<main [attr.data-theme]="theme()">
+  <div class="toolbar">
+    <h1>Mindmap</h1>
+    <button class="theme-toggle" (click)="toggleTheme()" [attr.aria-label]="theme() === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'">
+      @if (theme() === 'dark') {
+        <span class="icon">☀</span> Light
+      } @else {
+        <span class="icon">☽</span> Dark
+      }
+    </button>
+  </div>
+  <app-mindmap [data]="graph" [width]="960" [height]="680" [theme]="theme()" />
+</main>

@@ -1,0 +1,95 @@
+// Page background transitions with theme
+main {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  padding: 32px;
+  transition: background 0.25s ease;
+
+  &[data-theme='dark'] {
+    background: #181825;
+
+    h1 { color: #cdd6f4; }
+  }
+
+  &[data-theme='light'] {
+    // nFocus light background token
+    background: #f9fbfc;
+
+    h1 { color: #414651; }  // nFocus Greys-700
+  }
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  width: 960px;
+  max-width: 100%;
+}
+
+h1 {
+  margin: 0;
+  font-family: 'Public Sans', 'Inter', 'Segoe UI', system-ui, sans-serif;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  flex: 1;
+  transition: color 0.25s ease;
+}
+
+// Theme toggle button — nFocus Brand-Primary-700 (#4d458e) with subtle states
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 8px;        // nFocus corner-full token
+  border: 1.5px solid transparent;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+
+  main[data-theme='dark'] & {
+    background: #2a2a3e;
+    color: #cdd6f4;
+    border-color: #313244;
+
+    &:hover {
+      background: #4d458e;   // nFocus Brand-Primary-700
+      color: #fff;
+      border-color: #4d458e;
+    }
+
+    &:active {
+      background: #2d257d;   // Brand-Primary-800
+    }
+  }
+
+  main[data-theme='light'] & {
+    background: #fff;
+    color: #4d458e;           // nFocus Brand-Primary-700
+    border-color: #c5c0df;   // Brand-Primary-400
+
+    &:hover {
+      background: #4d458e;
+      color: #fff;
+      border-color: #4d458e;
+      box-shadow: 0 2px 8px rgba(77, 69, 142, 0.25);
+    }
+
+    &:active {
+      background: #2d257d;
+    }
+  }
+}
+
+.icon {
+  font-size: 14px;
+  line-height: 1;
+}

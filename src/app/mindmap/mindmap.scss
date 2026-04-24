@@ -1,0 +1,63 @@
+:host {
+  display: block;
+}
+
+.mindmap-wrapper {
+  position: relative;
+  display: inline-block;
+  border-radius: 12px;
+  overflow: hidden;
+  transition: box-shadow 0.25s ease, border-color 0.25s ease;
+}
+
+// ── Dark theme (default) ──────────────────────────────────────────────────────
+
+:host([data-theme='dark']) .mindmap-wrapper {
+  box-shadow:
+    0 0 0 1px #313244,
+    0 8px 32px rgba(0, 0, 0, 0.55);
+}
+
+:host([data-theme='dark']) .mindmap-hint {
+  color: #585b70;
+}
+
+// ── Light theme ───────────────────────────────────────────────────────────────
+// Colours from nFocus TraxCommunityPortal design tokens:
+//   border  → Greys-200 (#e9eaeb)
+//   shadow  → soft neutral
+//   hint    → Greys-400 (#a4a7ae)
+
+:host([data-theme='light']) .mindmap-wrapper {
+  box-shadow:
+    0 0 0 1px #e9eaeb,
+    0 4px 20px rgba(65, 70, 81, 0.12);
+}
+
+:host([data-theme='light']) .mindmap-hint {
+  color: #a4a7ae;   // nFocus Greys-400
+}
+
+// ── Shared ────────────────────────────────────────────────────────────────────
+
+.mindmap-svg {
+  display: block;
+  user-select: none;
+}
+
+:host ::ng-deep .node:hover circle.body {
+  filter: brightness(1.18);
+  transition: filter 0.15s ease;
+}
+
+.mindmap-hint {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11px;
+  font-family: 'Inter', 'Public Sans', 'Segoe UI', system-ui, sans-serif;
+  pointer-events: none;
+  white-space: nowrap;
+  transition: color 0.25s ease;
+}
