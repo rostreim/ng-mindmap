@@ -26,6 +26,10 @@ interface ThemeConfig {
   nodeColors: string[];
 }
 
+const DIM_OPACITY = 0.15;
+const DIM_DURATION_MS = 150;
+const RESTORE_DURATION_MS = 200;
+
 const THEMES: Record<MindmapTheme, ThemeConfig> = {
   dark: {
     background: '#1e1e2e',
@@ -245,7 +249,23 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .join('g')
       .attr('class', 'node')
       .call(this.dragBehavior())
-      .on('click', (_event, d) => this.zone.run(() => this.toggleCollapse(d)));
+      .on('click', (_event, d) => this.zone.run(() => this.toggleCollapse(d)))
+      .on('mouseenter', (_event, d) => {
+        this.g.select('.nodes').selectAll<SVGGElement, D3Node>('g.node')
+          .transition().duration(DIM_DURATION_MS)
+          .attr('opacity', (n) => (n === d ? 1 : DIM_OPACITY));
+        this.g.select('.links').selectAll<SVGLineElement, D3Link>('line')
+          .transition().duration(DIM_DURATION_MS)
+          .attr('opacity', DIM_OPACITY);
+      })
+      .on('mouseleave', () => {
+        this.g.select('.nodes').selectAll<SVGGElement, D3Node>('g.node')
+          .transition().duration(RESTORE_DURATION_MS)
+          .attr('opacity', 1);
+        this.g.select('.links').selectAll<SVGLineElement, D3Link>('line')
+          .transition().duration(RESTORE_DURATION_MS)
+          .attr('opacity', this.tc.edgeOpacity);
+      });
 
     // Halo glow ring
     nodeGroup.append('circle')
