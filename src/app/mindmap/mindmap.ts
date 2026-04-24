@@ -27,8 +27,6 @@ interface ThemeConfig {
 }
 
 const DIM_OPACITY = 0.15;
-const DIM_DURATION_MS = 150;
-const RESTORE_DURATION_MS = 200;
 
 const THEMES: Record<MindmapTheme, ThemeConfig> = {
   dark: {
@@ -251,20 +249,18 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .call(this.dragBehavior())
       .on('click', (_event, d) => this.zone.run(() => this.toggleCollapse(d)))
       .on('mouseenter', (_event, d) => {
-        this.g.select('.nodes').selectAll<SVGGElement, D3Node>('g.node')
-          .transition().duration(DIM_DURATION_MS)
-          .attr('opacity', (n) => (n === d ? 1 : DIM_OPACITY));
-        this.g.select('.links').selectAll<SVGLineElement, D3Link>('line')
-          .transition().duration(DIM_DURATION_MS)
-          .attr('opacity', DIM_OPACITY);
+        const allNodes = this.g.select('.nodes').selectAll<SVGGElement, D3Node>('g.node');
+        const allEdges = this.g.select('.links').selectAll<SVGLineElement, D3Link>('line');
+        allNodes.classed('mm-restoring', false)
+          .style('opacity', (n) => (n === d ? '1' : String(DIM_OPACITY)));
+        allEdges.classed('mm-restoring', false)
+          .style('opacity', String(DIM_OPACITY));
       })
       .on('mouseleave', () => {
-        this.g.select('.nodes').selectAll<SVGGElement, D3Node>('g.node')
-          .transition().duration(RESTORE_DURATION_MS)
-          .attr('opacity', 1);
-        this.g.select('.links').selectAll<SVGLineElement, D3Link>('line')
-          .transition().duration(RESTORE_DURATION_MS)
-          .attr('opacity', this.tc.edgeOpacity);
+        const allNodes = this.g.select('.nodes').selectAll<SVGGElement, D3Node>('g.node');
+        const allEdges = this.g.select('.links').selectAll<SVGLineElement, D3Link>('line');
+        allNodes.classed('mm-restoring', true).style('opacity', '1');
+        allEdges.classed('mm-restoring', true).style('opacity', String(this.tc.edgeOpacity));
       });
 
     // Halo glow ring

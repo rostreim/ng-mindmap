@@ -45,9 +45,34 @@
   user-select: none;
 }
 
-:host ::ng-deep .node:hover circle.body {
-  filter: brightness(1.18);
-  transition: filter 0.15s ease;
+// CSS compositor-driven fade — smoother than JS rAF transitions and
+// unaffected by simulation ticks running concurrently.
+// dim-in is quick to feel responsive; restore is slower for a softer release.
+:host ::ng-deep {
+  .node {
+    transition: opacity 180ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .links line {
+    transition: opacity 180ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .node.mm-restoring,
+  .links line.mm-restoring {
+    transition: opacity 320ms cubic-bezier(0.0, 0, 0.2, 1);
+  }
+
+  .node:hover circle.body {
+    filter: brightness(1.18);
+    transition: filter 0.15s ease;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :host ::ng-deep .node,
+  :host ::ng-deep .links line {
+    transition: none;
+  }
 }
 
 .mindmap-hint {
