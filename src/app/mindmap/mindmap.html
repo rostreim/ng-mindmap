@@ -23,6 +23,7 @@
               [class.mm-item--disabled]="entry.disabled"
               [class.mm-item--has-sub]="entry.children?.length"
               (click)="onMenuItemClick($event, entry)">
+            <span class="mm-item__icon" aria-hidden="true">{{ entry.icon ?? '' }}</span>
             <span class="mm-item__label">{{ entry.label }}</span>
             @if (entry.children?.length) {
               <span class="mm-item__arrow" aria-hidden="true">›</span>
@@ -36,6 +37,7 @@
                         [attr.aria-disabled]="sub.disabled || null"
                         [class.mm-item--disabled]="sub.disabled"
                         (click)="onMenuItemClick($event, sub)">
+                      <span class="mm-item__icon" aria-hidden="true">{{ sub.icon ?? '' }}</span>
                       <span class="mm-item__label">{{ sub.label }}</span>
                     </li>
                   }
