@@ -45,7 +45,7 @@ export class App {
       },
       { type: 'separator' },
       { type: 'item', icon: '✏', label: 'Rename…',     action: () => console.log('rename', node.id) },
-      { type: 'item', icon: '✕', label: 'Delete node', action: () => console.log('delete', node.id) },
+      { type: 'item', icon: '✕', label: 'Delete node', intent: 'danger', action: () => console.log('delete', node.id) },
     ]);
   };
 

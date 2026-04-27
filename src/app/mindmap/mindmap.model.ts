@@ -24,8 +24,10 @@ export interface D3Link extends SimulationLinkDatum<D3Node> {
 
 // ── Context menu ─────────────────────────────────────────────────────────────
 
+export type MenuItemIntent = 'danger' | 'warning';
+
 export type MenuEntry =
-  | { type: 'item'; label: string; action: () => void; disabled?: boolean; icon?: string; children?: MenuEntry[] }
+  | { type: 'item'; label: string; action: () => void; disabled?: boolean; icon?: string; intent?: MenuItemIntent; children?: MenuEntry[] }
   | { type: 'topic'; label: string }
   | { type: 'separator' };
 
