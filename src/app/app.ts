@@ -27,6 +27,8 @@ export class App {
   readonly nodeContextMenu = (node: MindmapNode): Promise<MenuEntry[]> => {
     const hasChildren = !!node.children?.length;
     return Promise.resolve([
+      { type: 'topic', label: `${node.label}` },
+      { type: 'separator' },
       { type: 'item', icon: '⊕', label: 'Expand all',   action: () => console.log('expand all', node.id),   disabled: !hasChildren },
       { type: 'item', icon: '⊖', label: 'Collapse all', action: () => console.log('collapse all', node.id), disabled: !hasChildren },
       { type: 'separator' },

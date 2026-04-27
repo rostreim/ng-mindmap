@@ -16,6 +16,8 @@
       @for (entry of menuEntries(); track $index) {
         @if (entry.type === 'separator') {
           <li class="mm-sep" role="separator"></li>
+        } @else if (entry.type === 'topic') {
+          <li class="mm-topic" role="presentation">{{ entry.label }}</li>
         } @else {
           <li class="mm-item"
               role="menuitem"
@@ -31,6 +33,8 @@
                 @for (sub of entry.children!; track $index) {
                   @if (sub.type === 'separator') {
                     <li class="mm-sep" role="separator"></li>
+                  } @else if (sub.type === 'topic') {
+                    <li class="mm-topic" role="presentation">{{ sub.label }}</li>
                   } @else {
                     <li class="mm-item"
                         role="menuitem"

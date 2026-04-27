@@ -160,6 +160,15 @@
   margin: 4px 0;
 }
 
+.mm-topic {
+  padding: 5px 14px;
+  font-family: 'Inter', 'Public Sans', 'Segoe UI', system-ui, sans-serif;
+  font-size: 11px;
+  opacity: 0.45;
+  pointer-events: none;
+  user-select: none;
+}
+
 // Submenu — shown on parent hover.
 //
 // Uses opacity/visibility (not display) so we can delay the *hide* transition.
