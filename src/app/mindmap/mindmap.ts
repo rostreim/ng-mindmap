@@ -26,6 +26,8 @@ interface ThemeConfig {
   nodeColors: string[];
 }
 
+const DIM_OPACITY = 0.15;
+
 const THEMES: Record<MindmapTheme, ThemeConfig> = {
   dark: {
     background: '#1e1e2e',
@@ -245,10 +247,28 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .join('g')
       .attr('class', 'node')
       .call(this.dragBehavior())
-      .on('click', (_event, d) => this.zone.run(() => this.toggleCollapse(d)));
+      .on('click', (_event, d) => this.zone.run(() => this.toggleCollapse(d)))
+      .on('mouseenter', (_event, d) => {
+        const allNodes = this.g.select('.nodes').selectAll<SVGGElement, D3Node>('g.node');
+        const allEdges = this.g.select('.links').selectAll<SVGLineElement, D3Link>('line');
+        allNodes.classed('mm-restoring', false)
+          .style('opacity', (n) => (n === d ? '1' : String(DIM_OPACITY)));
+        allEdges.classed('mm-restoring', false)
+          .style('opacity', String(DIM_OPACITY));
+      })
+      .on('mouseleave', () => {
+        const allNodes = this.g.select('.nodes').selectAll<SVGGElement, D3Node>('g.node');
+        const allEdges = this.g.select('.links').selectAll<SVGLineElement, D3Link>('line');
+        allNodes.classed('mm-restoring', true).style('opacity', '1');
+        allEdges.classed('mm-restoring', true).style('opacity', String(this.tc.edgeOpacity));
+      });
+
+    // Inner group — CSS scale applied here so D3's translate on the outer
+    // group is unaffected. transform-box + transform-origin set in SCSS.
+    const inner = nodeGroup.append('g').attr('class', 'node-scale');
 
     // Halo glow ring
-    nodeGroup.append('circle')
+    inner.append('circle')
       .attr('class', 'halo')
       .attr('r', (d) => this.nodeRadius(d) + 5)
       .attr('fill', 'none')
@@ -258,7 +278,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .attr('filter', 'url(#mm-glow)');
 
     // Main filled circle
-    nodeGroup.append('circle')
+    inner.append('circle')
       .attr('class', 'body')
       .attr('r', (d) => this.nodeRadius(d))
       .attr('fill', (d) => this.colorScale(d.depth))
@@ -268,7 +288,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .attr('cursor', 'pointer');
 
     // Label below the node
-    nodeGroup.append('text')
+    inner.append('text')
       .text((d) => d.label)
       .attr('dy', (d) => this.nodeRadius(d) + 13)
       .attr('text-anchor', 'middle')
@@ -279,7 +299,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .attr('pointer-events', 'none');
 
     // Small dot when node has hidden children
-    nodeGroup.append('circle')
+    inner.append('circle')
       .attr('class', 'badge')
       .attr('r', 4)
       .attr('cx', (d) => this.nodeRadius(d))
