@@ -93,3 +93,65 @@ h1 {
   font-size: 14px;
   line-height: 1;
 }
+
+.node-detail {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 960px;
+  max-width: 100%;
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 13px;
+  animation: detail-in 0.15s ease;
+
+  main[data-theme='dark'] & {
+    background: #2a2a3e;
+    border: 1.5px solid #313244;
+    color: #cdd6f4;
+  }
+
+  main[data-theme='light'] & {
+    background: #fff;
+    border: 1.5px solid #c5c0df;
+    color: #414651;
+  }
+
+  &__label {
+    font-weight: 600;
+    flex: 1;
+  }
+
+  &__id {
+    font-size: 11px;
+    opacity: 0.55;
+    font-family: 'JetBrains Mono', 'Cascadia Code', monospace;
+  }
+
+  &__close {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: background 0.15s ease;
+    line-height: 1;
+
+    main[data-theme='dark'] & {
+      color: #cdd6f4;
+      &:hover { background: #313244; }
+    }
+
+    main[data-theme='light'] & {
+      color: #414651;
+      &:hover { background: #f0eef8; }
+    }
+  }
+}
+
+@keyframes detail-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

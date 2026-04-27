@@ -9,5 +9,12 @@
       }
     </button>
   </div>
-  <app-mindmap [data]="graph" [width]="960" [height]="680" [theme]="theme()" [contextMenuFn]="nodeContextMenu" />
+  @if (selectedNode(); as node) {
+    <div class="node-detail">
+      <span class="node-detail__label">{{ node.label }}</span>
+      <span class="node-detail__id">{{ node.id }}</span>
+      <button class="node-detail__close" (click)="selectedNode.set(null)" aria-label="Dismiss">✕</button>
+    </div>
+  }
+  <app-mindmap [data]="graph" [width]="960" [height]="680" [theme]="theme()" [contextMenuFn]="nodeContextMenu" [nodeClickFn]="nodeClickFn" />
 </main>
