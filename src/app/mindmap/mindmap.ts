@@ -1,6 +1,7 @@
 import {
   Component,
   ElementRef,
+  HostListener,
   Input,
   OnChanges,
   OnDestroy,
@@ -9,9 +10,10 @@ import {
   ViewChild,
   ChangeDetectionStrategy,
   NgZone,
+  signal,
 } from '@angular/core';
 import * as d3 from 'd3';
-import { MindmapNode, D3Node, D3Link } from './mindmap.model';
+import { MindmapNode, D3Node, D3Link, MenuEntry, ContextMenuFn } from './mindmap.model';
 
 export type MindmapTheme = 'dark' | 'light';
 
@@ -37,18 +39,16 @@ const THEMES: Record<MindmapTheme, ThemeConfig> = {
     badgeFill: '#f38ba8',
     glowStdDeviation: 3.5,
     haloOpacity: 0.2,
-    // Obsidian-style purple → green
     nodeColors: ['#7c6af7', '#a78bfa', '#c4b5fd', '#6ee7b7', '#86efac', '#4ade80'],
   },
   light: {
     background: '#f9fbfc',
-    edgeStroke: '#d5d7da',      // nFocus Greys-300
+    edgeStroke: '#d5d7da',
     edgeOpacity: 0.9,
-    labelFill: '#414651',       // nFocus Greys-700 / mat-sys-on-surface
-    badgeFill: '#d4044b',       // nFocus error red
+    labelFill: '#414651',
+    badgeFill: '#d4044b',
     glowStdDeviation: 2.5,
     haloOpacity: 0.15,
-    // nFocus Kendo series palette — Brand-Primary → series B–F
     nodeColors: ['#4d458e', '#00a6fb', '#53a2be', '#fe883a', '#90c544', '#dd3559'],
   },
 };
@@ -68,8 +68,31 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
   @Input() width = 900;
   @Input() height = 650;
   @Input() theme: MindmapTheme = 'dark';
+  @Input() contextMenuFn?: ContextMenuFn;
 
   @ViewChild('svgContainer', { static: true }) svgRef!: ElementRef<SVGSVGElement>;
+
+  // ── Context menu state ────────────────────────────────────────────────────
+
+  readonly menuOpen = signal(false);
+  readonly menuX = signal(0);
+  readonly menuY = signal(0);
+  readonly menuEntries = signal<MenuEntry[]>([]);
+
+  @HostListener('document:click')
+  @HostListener('document:keydown.escape')
+  closeMenu(): void {
+    this.menuOpen.set(false);
+  }
+
+  onMenuItemClick(event: MouseEvent, entry: MenuEntry & { type: 'item' }): void {
+    event.stopPropagation();
+    if (entry.disabled || entry.children?.length) return;
+    entry.action();
+    this.menuOpen.set(false);
+  }
+
+  // ── D3 internals ─────────────────────────────────────────────────────────
 
   private svg!: d3.Selection<SVGSVGElement, unknown, null, undefined>;
   private g!: d3.Selection<SVGGElement, unknown, null, undefined>;
@@ -94,7 +117,6 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
 
     if (changes['theme']) {
       this.applyThemeToBackground();
-      // Full redraw so D3 picks up new colours
       if (this.rootNode) this.redraw();
       return;
     }
@@ -132,11 +154,10 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
 
   private applyThemeToBackground(): void {
     this.svg.select('rect.mm-bg').attr('fill', this.tc.background);
-    // Remove cached glow filter so it gets recreated with new blur strength
     this.svg.select('defs').select('#mm-glow').remove();
   }
 
-  // ── Colour scale ──────────────────────────────────────────────────────────
+  // ── Colour scale ───────────────────────────────────────────────────────────
 
   private buildColorScale(): void {
     this.colorScale = d3.scaleOrdinal<number, string>()
@@ -144,7 +165,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .range(this.tc.nodeColors);
   }
 
-  // ── Data → D3 node tree ───────────────────────────────────────────────────
+  // ── Data → D3 node tree ────────────────────────────────────────────────────
 
   private buildTree(raw: MindmapNode, parent: D3Node | null, depth: number): D3Node {
     const node: D3Node = {
@@ -155,6 +176,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       _children: null,
       children: null,
       parent,
+      sourceNode: raw,
       x: (Math.random() - 0.5) * 60,
       y: (Math.random() - 0.5) * 60,
     };
@@ -248,6 +270,21 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .attr('class', 'node')
       .call(this.dragBehavior())
       .on('click', (_event, d) => this.zone.run(() => this.toggleCollapse(d)))
+      .on('contextmenu', (event: MouseEvent, d: D3Node) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!this.contextMenuFn) return;
+        const x = event.clientX;
+        const y = event.clientY;
+        this.contextMenuFn(d.sourceNode).then((entries) => {
+          this.zone.run(() => {
+            this.menuEntries.set(entries);
+            this.menuX.set(x);
+            this.menuY.set(y);
+            this.menuOpen.set(true);
+          });
+        });
+      })
       .on('mouseenter', (_event, d) => {
         const allNodes = this.g.select('.nodes').selectAll<SVGGElement, D3Node>('g.node');
         const allEdges = this.g.select('.links').selectAll<SVGLineElement, D3Link>('line');
@@ -263,11 +300,8 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
         allEdges.classed('mm-restoring', true).style('opacity', String(this.tc.edgeOpacity));
       });
 
-    // Inner group — CSS scale applied here so D3's translate on the outer
-    // group is unaffected. transform-box + transform-origin set in SCSS.
     const inner = nodeGroup.append('g').attr('class', 'node-scale');
 
-    // Halo glow ring
     inner.append('circle')
       .attr('class', 'halo')
       .attr('r', (d) => this.nodeRadius(d) + 5)
@@ -277,7 +311,6 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .attr('stroke-width', 7)
       .attr('filter', 'url(#mm-glow)');
 
-    // Main filled circle
     inner.append('circle')
       .attr('class', 'body')
       .attr('r', (d) => this.nodeRadius(d))
@@ -287,7 +320,6 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .attr('stroke-width', 1.5)
       .attr('cursor', 'pointer');
 
-    // Label below the node
     inner.append('text')
       .text((d) => d.label)
       .attr('dy', (d) => this.nodeRadius(d) + 13)
@@ -298,7 +330,6 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .attr('font-family', '"Inter", "Public Sans", "Segoe UI", system-ui, sans-serif')
       .attr('pointer-events', 'none');
 
-    // Small dot when node has hidden children
     inner.append('circle')
       .attr('class', 'badge')
       .attr('r', 4)
