@@ -263,8 +263,12 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
         allEdges.classed('mm-restoring', true).style('opacity', String(this.tc.edgeOpacity));
       });
 
+    // Inner group — CSS scale applied here so D3's translate on the outer
+    // group is unaffected. transform-box + transform-origin set in SCSS.
+    const inner = nodeGroup.append('g').attr('class', 'node-scale');
+
     // Halo glow ring
-    nodeGroup.append('circle')
+    inner.append('circle')
       .attr('class', 'halo')
       .attr('r', (d) => this.nodeRadius(d) + 5)
       .attr('fill', 'none')
@@ -274,7 +278,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .attr('filter', 'url(#mm-glow)');
 
     // Main filled circle
-    nodeGroup.append('circle')
+    inner.append('circle')
       .attr('class', 'body')
       .attr('r', (d) => this.nodeRadius(d))
       .attr('fill', (d) => this.colorScale(d.depth))
@@ -284,7 +288,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .attr('cursor', 'pointer');
 
     // Label below the node
-    nodeGroup.append('text')
+    inner.append('text')
       .text((d) => d.label)
       .attr('dy', (d) => this.nodeRadius(d) + 13)
       .attr('text-anchor', 'middle')
@@ -295,7 +299,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .attr('pointer-events', 'none');
 
     // Small dot when node has hidden children
-    nodeGroup.append('circle')
+    inner.append('circle')
       .attr('class', 'badge')
       .attr('r', 4)
       .attr('cx', (d) => this.nodeRadius(d))
