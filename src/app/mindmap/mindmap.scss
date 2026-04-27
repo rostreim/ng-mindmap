@@ -160,6 +160,15 @@
   margin: 4px 0;
 }
 
+.mm-topic {
+  padding: 5px 14px;
+  font-family: 'Inter', 'Public Sans', 'Segoe UI', system-ui, sans-serif;
+  font-size: 11px;
+  opacity: 0.45;
+  pointer-events: none;
+  user-select: none;
+}
+
 // Submenu — shown on parent hover.
 //
 // Uses opacity/visibility (not display) so we can delay the *hide* transition.
@@ -215,6 +224,9 @@
     background: #363a4f;
   }
 
+  .mm-item--danger  { color: #ed8796; }
+  .mm-item--warning { color: #eed49f; }
+
   .mm-sep { background: #3b3b5c; }
 
   .mm-submenu {
@@ -236,6 +248,9 @@
     background: #f4f4f9;           // nFocus Brand-Primary-100
     color: #4d458e;                // nFocus Brand-Primary-700
   }
+
+  .mm-item--danger  { color: #c0392b; }
+  .mm-item--warning { color: #b45309; }
 
   .mm-sep { background: #e9eaeb; } // nFocus Greys-200
 

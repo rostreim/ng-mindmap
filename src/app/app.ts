@@ -27,6 +27,8 @@ export class App {
   readonly nodeContextMenu = (node: MindmapNode): Promise<MenuEntry[]> => {
     const hasChildren = !!node.children?.length;
     return Promise.resolve([
+      { type: 'topic', label: `${node.label}` },
+      { type: 'separator' },
       { type: 'item', icon: '⊕', label: 'Expand all',   action: () => console.log('expand all', node.id),   disabled: !hasChildren },
       { type: 'item', icon: '⊖', label: 'Collapse all', action: () => console.log('collapse all', node.id), disabled: !hasChildren },
       { type: 'separator' },
@@ -43,7 +45,7 @@ export class App {
       },
       { type: 'separator' },
       { type: 'item', icon: '✏', label: 'Rename…',     action: () => console.log('rename', node.id) },
-      { type: 'item', icon: '✕', label: 'Delete node', action: () => console.log('delete', node.id) },
+      { type: 'item', icon: '✕', label: 'Delete node', intent: 'danger', action: () => console.log('delete', node.id) },
     ]);
   };
 
