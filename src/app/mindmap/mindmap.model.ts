@@ -29,3 +29,6 @@ export type MenuEntry =
   | { type: 'separator' };
 
 export type ContextMenuFn = (node: MindmapNode) => Promise<MenuEntry[]>;
+
+// Return true to suppress the default collapse/expand behaviour.
+export type NodeClickFn = (node: MindmapNode) => boolean | void;
