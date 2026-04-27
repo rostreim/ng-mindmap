@@ -4,3 +4,47 @@
     Scroll to zoom &nbsp;·&nbsp; Drag canvas to pan &nbsp;·&nbsp; Click node to collapse/expand
   </div>
 </div>
+
+@if (menuOpen()) {
+  <div class="mm-context-menu"
+       role="menu"
+       aria-label="Node actions"
+       [style.left.px]="menuX()"
+       [style.top.px]="menuY()"
+       (click)="$event.stopPropagation()">
+    <ul class="mm-menu" role="presentation">
+      @for (entry of menuEntries(); track $index) {
+        @if (entry.type === 'separator') {
+          <li class="mm-sep" role="separator"></li>
+        } @else {
+          <li class="mm-item"
+              role="menuitem"
+              [attr.aria-disabled]="entry.disabled || null"
+              [class.mm-item--disabled]="entry.disabled"
+              [class.mm-item--has-sub]="entry.children?.length"
+              (click)="onMenuItemClick($event, entry)">
+            <span class="mm-item__label">{{ entry.label }}</span>
+            @if (entry.children?.length) {
+              <span class="mm-item__arrow" aria-hidden="true">›</span>
+              <ul class="mm-menu mm-submenu" role="menu">
+                @for (sub of entry.children!; track $index) {
+                  @if (sub.type === 'separator') {
+                    <li class="mm-sep" role="separator"></li>
+                  } @else {
+                    <li class="mm-item"
+                        role="menuitem"
+                        [attr.aria-disabled]="sub.disabled || null"
+                        [class.mm-item--disabled]="sub.disabled"
+                        (click)="onMenuItemClick($event, sub)">
+                      <span class="mm-item__label">{{ sub.label }}</span>
+                    </li>
+                  }
+                }
+              </ul>
+            }
+          </li>
+        }
+      }
+    </ul>
+  </div>
+}
