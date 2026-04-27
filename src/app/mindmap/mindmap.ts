@@ -13,7 +13,7 @@ import {
   signal,
 } from '@angular/core';
 import * as d3 from 'd3';
-import { MindmapNode, D3Node, D3Link, MenuEntry, ContextMenuFn } from './mindmap.model';
+import { MindmapNode, D3Node, D3Link, MenuEntry, ContextMenuFn, NodeClickFn } from './mindmap.model';
 
 export type MindmapTheme = 'dark' | 'light';
 
@@ -69,6 +69,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
   @Input() height = 650;
   @Input() theme: MindmapTheme = 'dark';
   @Input() contextMenuFn?: ContextMenuFn;
+  @Input() nodeClickFn?: NodeClickFn;
 
   @ViewChild('svgContainer', { static: true }) svgRef!: ElementRef<SVGSVGElement>;
 
@@ -269,7 +270,10 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .join('g')
       .attr('class', 'node')
       .call(this.dragBehavior())
-      .on('click', (_event, d) => this.zone.run(() => this.toggleCollapse(d)))
+      .on('click', (_event, d) => this.zone.run(() => {
+        if (this.nodeClickFn?.(d.sourceNode) === true) return;
+        this.toggleCollapse(d);
+      }))
       .on('contextmenu', (event: MouseEvent, d: D3Node) => {
         event.preventDefault();
         event.stopPropagation();

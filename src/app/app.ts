@@ -1,6 +1,6 @@
 import { Component, signal } from '@angular/core';
 import { MindmapComponent, MindmapTheme } from './mindmap/mindmap';
-import { MindmapNode, MenuEntry } from './mindmap/mindmap.model';
+import { MindmapNode, MenuEntry, NodeClickFn } from './mindmap/mindmap.model';
 
 @Component({
   selector: 'app-root',
@@ -11,10 +11,18 @@ import { MindmapNode, MenuEntry } from './mindmap/mindmap.model';
 })
 export class App {
   readonly theme = signal<MindmapTheme>('dark');
+  readonly selectedNode = signal<MindmapNode | null>(null);
 
   toggleTheme(): void {
     this.theme.update((t) => (t === 'dark' ? 'light' : 'dark'));
   }
+
+  readonly nodeClickFn: NodeClickFn = (node: MindmapNode): boolean | void => {
+    if (!node.children?.length) {
+      this.selectedNode.set(node);
+      return true;
+    }
+  };
 
   readonly nodeContextMenu = (node: MindmapNode): Promise<MenuEntry[]> => {
     const hasChildren = !!node.children?.length;
