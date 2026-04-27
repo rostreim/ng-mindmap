@@ -25,7 +25,7 @@ export interface D3Link extends SimulationLinkDatum<D3Node> {
 // ── Context menu ─────────────────────────────────────────────────────────────
 
 export type MenuEntry =
-  | { type: 'item'; label: string; action: () => void; disabled?: boolean; children?: MenuEntry[] }
+  | { type: 'item'; label: string; action: () => void; disabled?: boolean; icon?: string; children?: MenuEntry[] }
   | { type: 'separator' };
 
 export type ContextMenuFn = (node: MindmapNode) => Promise<MenuEntry[]>;
