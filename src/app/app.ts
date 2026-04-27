@@ -25,6 +25,7 @@ export class App {
       {
         type: 'item',
         label: 'Add child',
+        action: () => {},
         children: [
           { type: 'item', label: 'Add note',  action: () => console.log('add note', node.id) },
           { type: 'item', label: 'Add link',  action: () => console.log('add link', node.id) },
