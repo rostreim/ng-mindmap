@@ -19,22 +19,23 @@ export class App {
   readonly nodeContextMenu = (node: MindmapNode): Promise<MenuEntry[]> => {
     const hasChildren = !!node.children?.length;
     return Promise.resolve([
-      { type: 'item', label: 'Expand all', action: () => console.log('expand all', node.id), disabled: !hasChildren },
-      { type: 'item', label: 'Collapse all', action: () => console.log('collapse all', node.id), disabled: !hasChildren },
+      { type: 'item', icon: '⊕', label: 'Expand all',   action: () => console.log('expand all', node.id),   disabled: !hasChildren },
+      { type: 'item', icon: '⊖', label: 'Collapse all', action: () => console.log('collapse all', node.id), disabled: !hasChildren },
       { type: 'separator' },
       {
         type: 'item',
+        icon: '+',
         label: 'Add child',
         action: () => {},
         children: [
-          { type: 'item', label: 'Add note',  action: () => console.log('add note', node.id) },
-          { type: 'item', label: 'Add link',  action: () => console.log('add link', node.id) },
-          { type: 'item', label: 'Add image', action: () => console.log('add image', node.id) },
+          { type: 'item', icon: '📄', label: 'Add note',  action: () => console.log('add note', node.id) },
+          { type: 'item', icon: '🔗', label: 'Add link',  action: () => console.log('add link', node.id) },
+          { type: 'item', icon: '🖼', label: 'Add image', action: () => console.log('add image', node.id) },
         ],
       },
       { type: 'separator' },
-      { type: 'item', label: 'Rename…',      action: () => console.log('rename', node.id) },
-      { type: 'item', label: 'Delete node',  action: () => console.log('delete', node.id) },
+      { type: 'item', icon: '✏', label: 'Rename…',     action: () => console.log('rename', node.id) },
+      { type: 'item', icon: '✕', label: 'Delete node', action: () => console.log('delete', node.id) },
     ]);
   };
 
