@@ -289,20 +289,39 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
           });
         });
       })
-      .on('mouseenter', (_event, d) => {
-        const allNodes = this.g.select('.nodes').selectAll<SVGGElement, D3Node>('g.node');
-        const allEdges = this.g.select('.links').selectAll<SVGLineElement, D3Link>('line');
-        allNodes.classed('mm-restoring', false)
-          .style('opacity', (n) => (n === d ? '1' : String(DIM_OPACITY)));
-        allEdges.classed('mm-restoring', false)
-          .style('opacity', String(DIM_OPACITY));
+      .on('mouseover', (_event, d) => {
+        this.g.select('.links').selectAll<SVGLineElement, D3Link>('line')
+          .transition().duration(150)
+          .attr('stroke-opacity', (link) =>
+            link.source.id === d.id || link.target.id === d.id ? 1 : 0.15)
+          .attr('stroke-width', (link) =>
+            link.source.id === d.id || link.target.id === d.id ? 2 : 1.5)
+          .attr('stroke', (link) =>
+            link.source.id === d.id || link.target.id === d.id
+              ? this.colorScale(d.depth)
+              : this.tc.edgeStroke);
       })
-      .on('mouseleave', () => {
-        const allNodes = this.g.select('.nodes').selectAll<SVGGElement, D3Node>('g.node');
-        const allEdges = this.g.select('.links').selectAll<SVGLineElement, D3Link>('line');
-        allNodes.classed('mm-restoring', true).style('opacity', '1');
-        allEdges.classed('mm-restoring', true).style('opacity', String(this.tc.edgeOpacity));
+      .on('mouseout', () => {
+        this.g.select('.links').selectAll<SVGLineElement, D3Link>('line')
+          .transition().duration(150)
+          .attr('stroke-opacity', this.tc.edgeOpacity)
+          .attr('stroke-width', 1.5)
+          .attr('stroke', this.tc.edgeStroke);
       });
+//   .on('mouseenter', (_event, d) => {
+//     const allNodes = this.g.select('.nodes').selectAll<SVGGElement, D3Node>('g.node');
+//     const allEdges = this.g.select('.links').selectAll<SVGLineElement, D3Link>('line');
+//     allNodes.classed('mm-restoring', false)
+//       .style('opacity', (n) => (n === d ? '1' : String(DIM_OPACITY)));
+//     allEdges.classed('mm-restoring', false)
+//       .style('opacity', String(DIM_OPACITY));
+//   })
+//   .on('mouseleave', () => {
+//     const allNodes = this.g.select('.nodes').selectAll<SVGGElement, D3Node>('g.node');
+//     const allEdges = this.g.select('.links').selectAll<SVGLineElement, D3Link>('line');
+//     allNodes.classed('mm-restoring', true).style('opacity', '1');
+//     allEdges.classed('mm-restoring', true).style('opacity', String(this.tc.edgeOpacity));
+//   });
 
     const inner = nodeGroup.append('g').attr('class', 'node-scale');
 
