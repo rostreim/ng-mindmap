@@ -16,6 +16,7 @@ import * as d3 from 'd3';
 import { MindmapNode, D3Node, D3Link, MenuEntry, ContextMenuFn, NodeClickFn } from './mindmap.model';
 
 export type MindmapTheme = 'dark' | 'light';
+export type MindmapLayout = 'force' | 'radial' | 'hybrid';
 
 interface ThemeConfig {
   background: string;
@@ -49,6 +50,15 @@ const DRAG_CLICK_DISTANCE = 4;
 /** Empty margin (px) kept around the graph's bounding box by zoomToFit(). */
 const FIT_PADDING = 60;
 const FIT_TRANSITION_MS = 400;
+
+/** Radial distance (px) between consecutive depth rings in 'radial'/'hybrid' layout mode. */
+const RADIAL_RING_SPACING = 100;
+/** Duration (ms) of the position transition when 'radial' mode redraws (no simulation to smooth it otherwise). */
+const RADIAL_TRANSITION_MS = 400;
+/** Pull strength (0-1) of 'hybrid' mode's forceX/forceY toward each node's computed radial target. */
+const HYBRID_POSITION_STRENGTH = 0.3;
+/** Alpha kick used to (re)settle 'hybrid' mode after a redraw. */
+const HYBRID_ALPHA = 0.6;
 
 const THEMES: Record<MindmapTheme, ThemeConfig> = {
   dark: {
@@ -91,6 +101,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
   @Input() contextMenuFn?: ContextMenuFn;
   @Input() nodeClickFn?: NodeClickFn;
   @Input() ariaLabel = 'Mind map';
+  @Input() layoutMode: MindmapLayout = 'force';
 
   @ViewChild('svgContainer', { static: true }) svgRef!: ElementRef<SVGSVGElement>;
 
@@ -512,6 +523,22 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
         break;
       }
     }
+  }
+
+  // ── Radial layout ────────────────────────────────────────────────────────────
+
+  /** Computes deterministic radial-tree target positions for the visible subtree (d3-hierarchy + d3-tree, mapped through polar coordinates). Writes targetX/targetY onto each visible node; does not touch x/y. */
+  private computeRadialPositions(): void {
+    const hierarchyRoot = d3.hierarchy<D3Node>(this.rootNode);
+    const maxRadius = hierarchyRoot.height * RADIAL_RING_SPACING;
+    const layout = d3.tree<D3Node>().size([2 * Math.PI, maxRadius]);
+
+    layout(hierarchyRoot).each((node) => {
+      const angle = node.x - Math.PI / 2;
+      const radius = node.y;
+      node.data.targetX = radius * Math.cos(angle);
+      node.data.targetY = radius * Math.sin(angle);
+    });
   }
 
   // ── Render / re-render ─────────────────────────────────────────────────────
