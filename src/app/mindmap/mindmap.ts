@@ -892,16 +892,19 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     return d3.drag<SVGGElement, D3Node>()
       .clickDistance(DRAG_CLICK_DISTANCE)
       .on('start', (event, d) => {
-        if (!event.active) this.simulation.alphaTarget(0.3).restart();
+        if (!event.active) this.simulation?.alphaTarget(0.3).restart();
         d.fx = d.x;
         d.fy = d.y;
       })
       .on('drag', (event, d) => {
         d.fx = event.x;
         d.fy = event.y;
+        d.x = event.x;
+        d.y = event.y;
+        this.tick();
       })
       .on('end', (event, d) => {
-        if (!event.active) this.simulation.alphaTarget(0);
+        if (!event.active) this.simulation?.alphaTarget(0);
         d.fx = null;
         d.fy = null;
       });
