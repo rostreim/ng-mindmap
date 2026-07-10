@@ -33,13 +33,22 @@ MindmapNode (input tree)
 
 - **`initSvg()`** — called once in `ngOnInit`; sets up the SVG, dark background rect, zoom/pan behavior, and the root `<g class="graph">` container.
 - **`render()`** — called on first init and on `data` input changes; rebuilds the full `D3Node` tree from scratch.
-- **`redraw()`** — called after every collapse/expand; clears the graph, re-flattens visible nodes, and restarts the simulation.
-- **`startSimulation()`** — runs *outside Angular's zone* via `NgZone.runOutsideAngular` so the D3 tick loop never triggers change detection. Collapse/expand re-enters the zone via `zone.run()`.
+- **`redraw()`** — called after every collapse/expand, theme change, or `layoutMode` change; re-flattens visible nodes and dispatches to one of three sync methods based on `layoutMode`.
+- **`syncForceSimulation()` / `syncHybridSimulation()` / `syncRadialLayout()`** — patch the DOM and (where applicable) the D3 force simulation via `join()` rather than tearing down and re-appending everything, so unaffected nodes keep their element identity across a redraw. All three run *outside Angular's zone* via `NgZone.runOutsideAngular`.
+- **`computeRadialPositions()`** — pure `d3-hierarchy`/`d3-tree` math (no DOM), used by `'radial'` and `'hybrid'` layout modes to compute deterministic target positions.
 - **`toggleCollapse()`** — swaps `children ↔ _children` on the clicked node, then calls `redraw()`.
+
+### Layout modes
+
+`layoutMode: 'force' | 'radial' | 'hybrid'` (default `'force'`, reactive) controls how node positions are computed:
+
+- **`force`** — today's original behavior: a continuously-running D3 force simulation (link/charge/center/collision), Obsidian-graph-view style.
+- **`radial`** — fully deterministic radial tree layout, no simulation.
+- **`hybrid`** — deterministic radial base positions with a brief, weak collision-only settle animation.
 
 ### Performance contract
 
-`ChangeDetectionStrategy.OnPush` + `NgZone.runOutsideAngular` means D3's 60 fps tick loop is invisible to Angular. Only structural changes (input swap, collapse) trigger Angular work.
+`ChangeDetectionStrategy.OnPush` + `NgZone.runOutsideAngular` means D3's tick loop (in `force`/`hybrid` modes) is invisible to Angular. Only structural changes (input swap, collapse, layout mode switch) trigger Angular work.
 
 ### Styling
 
