@@ -555,7 +555,18 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     const links: D3Link[] = [];
     this.flattenVisible(this.rootNode, nodes, links);
     this.visibleNodes = nodes;
-    this.zone.runOutsideAngular(() => this.syncSimulation(nodes, links));
+
+    if (this.layoutMode === 'force') {
+      this.zone.runOutsideAngular(() => this.syncForceSimulation(nodes, links));
+      return;
+    }
+
+    this.computeRadialPositions();
+    if (this.layoutMode === 'hybrid') {
+      this.zone.runOutsideAngular(() => this.syncHybridSimulation(nodes, links));
+    } else {
+      this.zone.runOutsideAngular(() => this.syncRadialLayout(nodes, links));
+    }
   }
 
   /**
@@ -564,12 +575,19 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
    * identity (and any in-flight CSS transition) across a collapse/expand or data swap.
    * The simulation is reheated in place rather than recreated, preserving velocity.
    */
-  private syncSimulation(nodes: D3Node[], links: D3Link[]): void {
+  private syncForceSimulation(nodes: D3Node[], links: D3Link[]): void {
     this.buildGlowFilter();
 
     if (this.simulation) {
       this.simulation.nodes(nodes);
-      (this.simulation.force('link') as d3.ForceLink<D3Node, D3Link>).links(links);
+      this.simulation.force('link', d3.forceLink<D3Node, D3Link>(links)
+        .id((d) => d.id)
+        .distance((d) => LINK_DISTANCE_BASE + d.target.depth * LINK_DISTANCE_PER_DEPTH));
+      this.simulation.force('charge', d3.forceManyBody().strength(CHARGE_STRENGTH));
+      this.simulation.force('center', d3.forceCenter(0, 0));
+      this.simulation.force('collision', d3.forceCollide<D3Node>((d) => this.nodeRadius(d) + COLLISION_PADDING));
+      this.simulation.force('x', null);
+      this.simulation.force('y', null);
       this.simulation.alpha(REDRAW_ALPHA).restart();
     } else {
       this.simulation = d3.forceSimulation<D3Node>(nodes)
@@ -585,6 +603,72 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
 
     this.updateEdges(links);
     this.updateNodes(nodes);
+  }
+
+  /**
+   * Uses the same computeRadialPositions() targets as 'radial' mode, but as a starting
+   * point for a weak, collision-only simulation instead of a final position — giving a
+   * soft settle-in that resolves accidental overlaps without any link/charge-driven
+   * structure. Reuses the same alpha-reheat-on-redraw mechanism as force mode.
+   */
+  private syncHybridSimulation(nodes: D3Node[], links: D3Link[]): void {
+    this.buildGlowFilter();
+
+    for (const n of nodes) {
+      n.x = n.targetX;
+      n.y = n.targetY;
+    }
+
+    if (this.simulation) {
+      this.simulation.nodes(nodes);
+      this.simulation.force('link', null);
+      this.simulation.force('charge', null);
+      this.simulation.force('center', null);
+      this.simulation.force('x', d3.forceX<D3Node>((d) => d.targetX ?? 0).strength(HYBRID_POSITION_STRENGTH));
+      this.simulation.force('y', d3.forceY<D3Node>((d) => d.targetY ?? 0).strength(HYBRID_POSITION_STRENGTH));
+      this.simulation.force('collision', d3.forceCollide<D3Node>((d) => this.nodeRadius(d) + COLLISION_PADDING));
+      this.simulation.alpha(HYBRID_ALPHA).restart();
+    } else {
+      this.simulation = d3.forceSimulation<D3Node>(nodes)
+        .force('x', d3.forceX<D3Node>((d) => d.targetX ?? 0).strength(HYBRID_POSITION_STRENGTH))
+        .force('y', d3.forceY<D3Node>((d) => d.targetY ?? 0).strength(HYBRID_POSITION_STRENGTH))
+        .force('collision', d3.forceCollide<D3Node>((d) => this.nodeRadius(d) + COLLISION_PADDING))
+        .alphaDecay(ALPHA_DECAY)
+        .on('tick', () => this.tick());
+    }
+
+    this.updateEdges(links);
+    this.updateNodes(nodes);
+  }
+
+  /**
+   * No simulation at all: sets each visible node's final x/y directly from its
+   * computeRadialPositions() target, then animates the DOM to it with a D3 transition
+   * (there's no running simulation to smooth a position jump otherwise, e.g. after a
+   * collapse/expand that shifts other nodes' angles).
+   */
+  private syncRadialLayout(nodes: D3Node[], links: D3Link[]): void {
+    this.simulation?.stop();
+    this.buildGlowFilter();
+
+    for (const n of nodes) {
+      n.x = n.targetX;
+      n.y = n.targetY;
+    }
+
+    this.updateEdges(links);
+    this.updateNodes(nodes);
+
+    this.g.select<SVGGElement>('.nodes').selectAll<SVGGElement, D3Node>('g.node')
+      .transition().duration(RADIAL_TRANSITION_MS)
+      .attr('transform', (d) => `translate(${d.x},${d.y})`);
+
+    this.g.select<SVGGElement>('.links').selectAll<SVGLineElement, D3Link>('line')
+      .transition().duration(RADIAL_TRANSITION_MS)
+      .attr('x1', (d) => d.source.x!)
+      .attr('y1', (d) => d.source.y!)
+      .attr('x2', (d) => d.target.x!)
+      .attr('y2', (d) => d.target.y!);
   }
 
   // ── Glow SVG filter ────────────────────────────────────────────────────────
