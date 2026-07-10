@@ -292,6 +292,14 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       return;
     }
 
+    if (changes['layoutMode'] && !changes['layoutMode'].firstChange) {
+      if (this.rootNode) {
+        this.redraw();
+        this.zoomToFitAfterSettle();
+      }
+      return;
+    }
+
     if (changes['data'] && !changes['data'].firstChange) {
       this.render();
     }
@@ -368,6 +376,23 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
 
     this.svg.transition().duration(FIT_TRANSITION_MS)
       .call(this.zoomBehavior.transform, transform);
+  }
+
+  /**
+   * Calls zoomToFit() once the current layout has actually settled, rather than
+   * immediately (which would measure a stale/mid-flight bounding box): waits for the
+   * simulation's 'end' event in force/hybrid mode, or for the position transition's
+   * duration to elapse in radial mode (which runs no simulation at all).
+   */
+  private zoomToFitAfterSettle(): void {
+    if (this.layoutMode === 'radial') {
+      setTimeout(() => this.zoomToFit(), RADIAL_TRANSITION_MS);
+      return;
+    }
+    this.simulation?.on('end.layoutSwitch', () => {
+      this.simulation?.on('end.layoutSwitch', null);
+      this.zoomToFit();
+    });
   }
 
   // ── Colour scale ───────────────────────────────────────────────────────────

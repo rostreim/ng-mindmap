@@ -3,6 +3,7 @@
     <h1>Mindmap</h1>
     <button class="theme-toggle" (click)="mm.resetView()">⟲ Reset</button>
     <button class="theme-toggle" (click)="mm.zoomToFit()">⤢ Fit</button>
+    <button class="theme-toggle" (click)="cycleLayoutMode()">⟐ {{ layoutMode() }}</button>
     <button class="theme-toggle" (click)="toggleTheme()" [attr.aria-label]="theme() === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'">
       @if (theme() === 'dark') {
         <span class="icon">☀</span> Light
@@ -18,5 +19,5 @@
       <button class="node-detail__close" (click)="selectedNode.set(null)" aria-label="Dismiss">✕</button>
     </div>
   }
-  <app-mindmap #mm [data]="graph" [width]="960" [height]="680" [theme]="theme()" [contextMenuFn]="nodeContextMenu" [nodeClickFn]="nodeClickFn" />
+  <app-mindmap #mm [data]="graph" [width]="960" [height]="680" [theme]="theme()" [layoutMode]="layoutMode()" [contextMenuFn]="nodeContextMenu" [nodeClickFn]="nodeClickFn" />
 </main>
