@@ -240,14 +240,9 @@ Add a new method right after `applyNodeTheme` in the `── Drawing ──` sec
       .attr('aria-level', (d) => d.depth + 1)
       .attr('aria-setsize', (d) => (d.parent ? (d.parent.children?.length ?? 1) : 1))
       .attr('aria-posinset', (d) => (d.parent ? (d.parent.children?.indexOf(d) ?? 0) + 1 : 1))
-      .each((d, i, groups) => {
-        const el = groups[i] as SVGGElement;
+      .attr('aria-expanded', (d) => {
         const hasChildren = !!(d.children?.length || d._children?.length);
-        if (hasChildren) {
-          el.setAttribute('aria-expanded', String(!!d.children?.length));
-        } else {
-          el.removeAttribute('aria-expanded');
-        }
+        return hasChildren ? String(!!d.children?.length) : null;
       });
   }
 ```
