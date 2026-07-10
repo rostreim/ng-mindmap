@@ -144,4 +144,71 @@ describe('MindmapComponent data functions', () => {
       expect(b._children).toBeNull();
     });
   });
+
+  describe('nextVisible / previousVisible / firstVisible / lastVisible', () => {
+    it('walks the flattened tree order forward and backward', () => {
+      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
+      const nodes: D3Node[] = [];
+      const links: D3Link[] = [];
+      (component as any).flattenVisible(tree, nodes, links);
+      // order: root, a, a1, a2, b
+
+      expect((component as any).nextVisible(nodes, 'root').id).toBe('a');
+      expect((component as any).nextVisible(nodes, 'a').id).toBe('a1');
+      expect((component as any).nextVisible(nodes, 'b')).toBeNull();
+
+      expect((component as any).previousVisible(nodes, 'b').id).toBe('a2');
+      expect((component as any).previousVisible(nodes, 'a1').id).toBe('a');
+      expect((component as any).previousVisible(nodes, 'root')).toBeNull();
+
+      expect((component as any).firstVisible(nodes).id).toBe('root');
+      expect((component as any).lastVisible(nodes).id).toBe('b');
+    });
+
+    it('returns null for an id not present in the array, and null first/last for an empty array', () => {
+      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
+      const nodes: D3Node[] = [];
+      const links: D3Link[] = [];
+      (component as any).flattenVisible(tree, nodes, links);
+
+      expect((component as any).nextVisible(nodes, 'missing')).toBeNull();
+      expect((component as any).previousVisible(nodes, 'missing')).toBeNull();
+      expect((component as any).firstVisible([])).toBeNull();
+      expect((component as any).lastVisible([])).toBeNull();
+    });
+  });
+
+  describe('firstChild', () => {
+    it('returns the first visible child, or null for a leaf', () => {
+      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
+      const a = tree.children![0];
+      const b = tree.children![1];
+
+      expect((component as any).firstChild(a).id).toBe('a1');
+      expect((component as any).firstChild(b)).toBeNull();
+    });
+
+    it('returns null when children have been collapsed into _children', () => {
+      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
+      const a = tree.children![0];
+      a._children = a.children;
+      a.children = [];
+
+      expect((component as any).firstChild(a)).toBeNull();
+    });
+  });
+
+  describe('isDescendantOf', () => {
+    it('returns true for a direct or transitive descendant, false otherwise', () => {
+      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
+      const a = tree.children![0];
+      const a1 = a.children![0];
+      const b = tree.children![1];
+
+      expect((component as any).isDescendantOf(a1, a)).toBe(true);
+      expect((component as any).isDescendantOf(a1, tree)).toBe(true);
+      expect((component as any).isDescendantOf(a, a1)).toBe(false);
+      expect((component as any).isDescendantOf(b, a)).toBe(false);
+    });
+  });
 });

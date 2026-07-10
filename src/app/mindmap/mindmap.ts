@@ -133,6 +133,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
 
   private colorScale!: d3.ScaleOrdinal<number, string>;
   private strokeColorByDepth: string[] = [];
+  private visibleNodes: D3Node[] = [];
 
   constructor(private zone: NgZone, private destroyRef: DestroyRef) {
     this.zone.runOutsideAngular(() => {
@@ -282,6 +283,41 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     });
   }
 
+  // ── Tree navigation (keyboard) ──────────────────────────────────────────────
+
+  private nextVisible(nodes: D3Node[], id: string): D3Node | null {
+    const i = nodes.findIndex((n) => n.id === id);
+    if (i === -1 || i === nodes.length - 1) return null;
+    return nodes[i + 1];
+  }
+
+  private previousVisible(nodes: D3Node[], id: string): D3Node | null {
+    const i = nodes.findIndex((n) => n.id === id);
+    if (i <= 0) return null;
+    return nodes[i - 1];
+  }
+
+  private firstVisible(nodes: D3Node[]): D3Node | null {
+    return nodes[0] ?? null;
+  }
+
+  private lastVisible(nodes: D3Node[]): D3Node | null {
+    return nodes.length ? nodes[nodes.length - 1] : null;
+  }
+
+  private firstChild(d: D3Node): D3Node | null {
+    return d.children && d.children.length ? d.children[0] : null;
+  }
+
+  private isDescendantOf(node: D3Node, ancestor: D3Node): boolean {
+    let cur = node.parent;
+    while (cur) {
+      if (cur.id === ancestor.id) return true;
+      cur = cur.parent;
+    }
+    return false;
+  }
+
   // ── Render / re-render ─────────────────────────────────────────────────────
 
   private render(): void {
@@ -294,6 +330,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     const nodes: D3Node[] = [];
     const links: D3Link[] = [];
     this.flattenVisible(this.rootNode, nodes, links);
+    this.visibleNodes = nodes;
     this.zone.runOutsideAngular(() => this.syncSimulation(nodes, links));
   }
 
