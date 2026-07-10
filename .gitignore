@@ -39,6 +39,9 @@ testem.log
 /typings
 __screenshots__/
 
+# Superpowers brainstorming companion
+.superpowers/
+
 # System files
 .DS_Store
 Thumbs.db
