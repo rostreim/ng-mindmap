@@ -1,7 +1,7 @@
 import {
   Component,
+  DestroyRef,
   ElementRef,
-  HostListener,
   Input,
   OnChanges,
   OnDestroy,
@@ -28,7 +28,27 @@ interface ThemeConfig {
   nodeColors: string[];
 }
 
-const DIM_OPACITY = 0.15;
+// ── Force-simulation tuning ─────────────────────────────────────────────────
+
+const LINK_DISTANCE_BASE = 70;
+const LINK_DISTANCE_PER_DEPTH = 12;
+const CHARGE_STRENGTH = -350;
+const COLLISION_PADDING = 14;
+const ALPHA_DECAY = 0.028;
+/** alpha kick used to reheat the simulation after a redraw (collapse/expand, data swap) */
+const REDRAW_ALPHA = 0.3;
+
+const ZOOM_SCALE_EXTENT: [number, number] = [0.1, 5];
+
+/** Node radius in px, indexed by depth; last entry repeats for any deeper level. */
+const NODE_RADII = [18, 12, 8];
+
+/** Minimum pointer travel (px) before a drag suppresses the following click, so a small drag doesn't also toggle collapse. */
+const DRAG_CLICK_DISTANCE = 4;
+
+/** Empty margin (px) kept around the graph's bounding box by zoomToFit(). */
+const FIT_PADDING = 60;
+const FIT_TRANSITION_MS = 400;
 
 const THEMES: Record<MindmapTheme, ThemeConfig> = {
   dark: {
@@ -80,11 +100,17 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
   readonly menuY = signal(0);
   readonly menuEntries = signal<MenuEntry[]>([]);
 
-  @HostListener('document:click')
-  @HostListener('document:keydown.escape')
-  closeMenu(): void {
-    this.menuOpen.set(false);
-  }
+  // Attached outside the Angular zone (see constructor) so a click/keydown anywhere in the
+  // document doesn't schedule change detection unless the menu is actually open.
+  private readonly onDocumentClick = (): void => {
+    if (this.menuOpen()) this.zone.run(() => this.menuOpen.set(false));
+  };
+
+  private readonly onDocumentKeydown = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape' && this.menuOpen()) {
+      this.zone.run(() => this.menuOpen.set(false));
+    }
+  };
 
   onMenuItemClick(event: MouseEvent, entry: MenuEntry & { type: 'item' }): void {
     event.stopPropagation();
@@ -97,6 +123,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
 
   private svg!: d3.Selection<SVGSVGElement, unknown, null, undefined>;
   private g!: d3.Selection<SVGGElement, unknown, null, undefined>;
+  private zoomBehavior!: d3.ZoomBehavior<SVGSVGElement, unknown>;
   private simulation!: d3.Simulation<D3Node, D3Link>;
   private rootNode!: D3Node;
 
@@ -105,8 +132,18 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   private colorScale!: d3.ScaleOrdinal<number, string>;
+  private strokeColorByDepth: string[] = [];
 
-  constructor(private zone: NgZone) {}
+  constructor(private zone: NgZone, private destroyRef: DestroyRef) {
+    this.zone.runOutsideAngular(() => {
+      document.addEventListener('click', this.onDocumentClick);
+      document.addEventListener('keydown', this.onDocumentKeydown);
+    });
+    this.destroyRef.onDestroy(() => {
+      document.removeEventListener('click', this.onDocumentClick);
+      document.removeEventListener('keydown', this.onDocumentKeydown);
+    });
+  }
 
   ngOnInit(): void {
     this.initSvg();
@@ -115,6 +152,10 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
 
   ngOnChanges(changes: SimpleChanges): void {
     if (!this.svg) return;
+
+    if (changes['width'] || changes['height']) {
+      this.svg.attr('width', this.width).attr('height', this.height);
+    }
 
     if (changes['theme']) {
       this.applyThemeToBackground();
@@ -144,18 +185,58 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .attr('fill', this.tc.background);
 
     this.g = this.svg.append('g').attr('class', 'graph');
+    // Links group must precede nodes group in the DOM so edges paint underneath nodes.
+    this.g.append('g').attr('class', 'links');
+    this.g.append('g').attr('class', 'nodes');
 
-    const zoom = d3.zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.1, 5])
+    this.zoomBehavior = d3.zoom<SVGSVGElement, unknown>()
+      .scaleExtent(ZOOM_SCALE_EXTENT)
       .on('zoom', (event) => this.g.attr('transform', event.transform));
 
-    this.svg.call(zoom);
-    this.svg.call(zoom.transform, d3.zoomIdentity.translate(this.width / 2, this.height / 2));
+    this.svg.call(this.zoomBehavior);
+    this.svg.call(this.zoomBehavior.transform, d3.zoomIdentity.translate(this.width / 2, this.height / 2));
   }
 
   private applyThemeToBackground(): void {
     this.svg.select('rect.mm-bg').attr('fill', this.tc.background);
     this.svg.select('defs').select('#mm-glow').remove();
+  }
+
+  // ── View controls ────────────────────────────────────────────────────────
+
+  /** Re-centers the graph at scale 1, undoing any pan/zoom. */
+  resetView(): void {
+    if (!this.svg) return;
+    this.svg.transition().duration(FIT_TRANSITION_MS)
+      .call(this.zoomBehavior.transform, d3.zoomIdentity.translate(this.width / 2, this.height / 2));
+  }
+
+  /** Pans/scales so every visible node fits in the viewport, within the configured zoom bounds. */
+  zoomToFit(): void {
+    if (!this.svg || !this.g.node()) return;
+    const bounds = this.g.node()!.getBBox();
+    if (bounds.width === 0 || bounds.height === 0) return;
+
+    const scale = Math.min(
+      ZOOM_SCALE_EXTENT[1],
+      Math.max(
+        ZOOM_SCALE_EXTENT[0],
+        Math.min(
+          (this.width - FIT_PADDING * 2) / bounds.width,
+          (this.height - FIT_PADDING * 2) / bounds.height,
+        ),
+      ),
+    );
+    const cx = bounds.x + bounds.width / 2;
+    const cy = bounds.y + bounds.height / 2;
+
+    const transform = d3.zoomIdentity
+      .translate(this.width / 2, this.height / 2)
+      .scale(scale)
+      .translate(-cx, -cy);
+
+    this.svg.transition().duration(FIT_TRANSITION_MS)
+      .call(this.zoomBehavior.transform, transform);
   }
 
   // ── Colour scale ───────────────────────────────────────────────────────────
@@ -164,6 +245,14 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     this.colorScale = d3.scaleOrdinal<number, string>()
       .domain([0, 1, 2, 3, 4, 5])
       .range(this.tc.nodeColors);
+
+    const brighterBy = this.theme === 'light' ? 0.4 : 0.6;
+    this.strokeColorByDepth = this.tc.nodeColors.map((color) =>
+      (d3.color(color) as d3.RGBColor).brighter(brighterBy).formatHex());
+  }
+
+  private strokeColorFor(d: D3Node): string {
+    return this.strokeColorByDepth[d.depth % this.strokeColorByDepth.length];
   }
 
   // ── Data → D3 node tree ────────────────────────────────────────────────────
@@ -201,33 +290,40 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   private redraw(): void {
-    this.clearGraph();
     this.buildColorScale();
     const nodes: D3Node[] = [];
     const links: D3Link[] = [];
     this.flattenVisible(this.rootNode, nodes, links);
-    this.zone.runOutsideAngular(() => this.startSimulation(nodes, links));
+    this.zone.runOutsideAngular(() => this.syncSimulation(nodes, links));
   }
 
-  private clearGraph(): void {
-    this.simulation?.stop();
-    this.g.selectAll('*').remove();
-  }
-
-  private startSimulation(nodes: D3Node[], links: D3Link[]): void {
-    this.simulation = d3.forceSimulation<D3Node>(nodes)
-      .force('link', d3.forceLink<D3Node, D3Link>(links)
-        .id((d) => d.id)
-        .distance((d) => 70 + d.target.depth * 12))
-      .force('charge', d3.forceManyBody().strength(-350))
-      .force('center', d3.forceCenter(0, 0))
-      .force('collision', d3.forceCollide<D3Node>((d) => this.nodeRadius(d) + 14))
-      .alphaDecay(0.028);
-
+  /**
+   * Patches the DOM and simulation to match `nodes`/`links` via D3 join() instead of
+   * tearing down and re-appending everything, so unaffected nodes keep their element
+   * identity (and any in-flight CSS transition) across a collapse/expand or data swap.
+   * The simulation is reheated in place rather than recreated, preserving velocity.
+   */
+  private syncSimulation(nodes: D3Node[], links: D3Link[]): void {
     this.buildGlowFilter();
-    this.drawEdges(links);
-    this.drawNodes(nodes);
-    this.simulation.on('tick', () => this.tick());
+
+    if (this.simulation) {
+      this.simulation.nodes(nodes);
+      (this.simulation.force('link') as d3.ForceLink<D3Node, D3Link>).links(links);
+      this.simulation.alpha(REDRAW_ALPHA).restart();
+    } else {
+      this.simulation = d3.forceSimulation<D3Node>(nodes)
+        .force('link', d3.forceLink<D3Node, D3Link>(links)
+          .id((d) => d.id)
+          .distance((d) => LINK_DISTANCE_BASE + d.target.depth * LINK_DISTANCE_PER_DEPTH))
+        .force('charge', d3.forceManyBody().strength(CHARGE_STRENGTH))
+        .force('center', d3.forceCenter(0, 0))
+        .force('collision', d3.forceCollide<D3Node>((d) => this.nodeRadius(d) + COLLISION_PADDING))
+        .alphaDecay(ALPHA_DECAY)
+        .on('tick', () => this.tick());
+    }
+
+    this.updateEdges(links);
+    this.updateNodes(nodes);
   }
 
   // ── Glow SVG filter ────────────────────────────────────────────────────────
@@ -253,21 +349,34 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
 
   // ── Drawing ────────────────────────────────────────────────────────────────
 
-  private drawEdges(links: D3Link[]): void {
-    this.g.append('g').attr('class', 'links')
+  private updateEdges(links: D3Link[]): void {
+    this.g.select<SVGGElement>('.links')
       .selectAll<SVGLineElement, D3Link>('line')
-      .data(links)
+      .data(links, (d) => `${d.source.id}→${d.target.id}`)
       .join('line')
       .attr('stroke', this.tc.edgeStroke)
       .attr('stroke-width', 1.5)
       .attr('stroke-opacity', this.tc.edgeOpacity);
   }
 
-  private drawNodes(nodes: D3Node[]): void {
-    const nodeGroup = this.g.append('g').attr('class', 'nodes')
+  private updateNodes(nodes: D3Node[]): void {
+    const merged = this.g.select<SVGGElement>('.nodes')
       .selectAll<SVGGElement, D3Node>('g.node')
       .data(nodes, (d) => d.id)
-      .join('g')
+      .join(
+        (enter) => this.enterNodes(enter),
+        (update) => update,
+        (exit) => exit.remove(),
+      );
+
+    this.applyNodeTheme(merged);
+  }
+
+  /** Structural setup for newly-entering nodes only: DOM shape + interaction handlers. */
+  private enterNodes(
+    enter: d3.Selection<d3.EnterElement, D3Node, SVGGElement, unknown>,
+  ): d3.Selection<SVGGElement, D3Node, SVGGElement, unknown> {
+    const nodeGroup = enter.append('g')
       .attr('class', 'node')
       .call(this.dragBehavior())
       .on('click', (_event, d) => this.zone.run(() => {
@@ -308,63 +417,51 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
           .attr('stroke-width', 1.5)
           .attr('stroke', this.tc.edgeStroke);
       });
-//   .on('mouseenter', (_event, d) => {
-//     const allNodes = this.g.select('.nodes').selectAll<SVGGElement, D3Node>('g.node');
-//     const allEdges = this.g.select('.links').selectAll<SVGLineElement, D3Link>('line');
-//     allNodes.classed('mm-restoring', false)
-//       .style('opacity', (n) => (n === d ? '1' : String(DIM_OPACITY)));
-//     allEdges.classed('mm-restoring', false)
-//       .style('opacity', String(DIM_OPACITY));
-//   })
-//   .on('mouseleave', () => {
-//     const allNodes = this.g.select('.nodes').selectAll<SVGGElement, D3Node>('g.node');
-//     const allEdges = this.g.select('.links').selectAll<SVGLineElement, D3Link>('line');
-//     allNodes.classed('mm-restoring', true).style('opacity', '1');
-//     allEdges.classed('mm-restoring', true).style('opacity', String(this.tc.edgeOpacity));
-//   });
 
     const inner = nodeGroup.append('g').attr('class', 'node-scale');
+    inner.append('circle').attr('class', 'halo').attr('filter', 'url(#mm-glow)');
+    inner.append('circle').attr('class', 'body').attr('cursor', 'pointer');
+    inner.append('text')
+      .attr('text-anchor', 'middle')
+      .attr('font-family', '"Inter", "Public Sans", "Segoe UI", system-ui, sans-serif')
+      .attr('pointer-events', 'none');
+    inner.append('circle').attr('class', 'badge').attr('r', 4).attr('pointer-events', 'none');
 
-    inner.append('circle')
-      .attr('class', 'halo')
+    return nodeGroup;
+  }
+
+  /** Depth/theme/collapse-state-dependent attrs, reapplied to entered + existing nodes alike. */
+  private applyNodeTheme(selection: d3.Selection<SVGGElement, D3Node, SVGGElement, unknown>): void {
+    selection.select<SVGCircleElement>('circle.halo')
       .attr('r', (d) => this.nodeRadius(d) + 5)
       .attr('fill', 'none')
       .attr('stroke', (d) => this.colorScale(d.depth))
       .attr('stroke-opacity', this.tc.haloOpacity)
-      .attr('stroke-width', 7)
-      .attr('filter', 'url(#mm-glow)');
+      .attr('stroke-width', 7);
 
-    inner.append('circle')
-      .attr('class', 'body')
+    selection.select<SVGCircleElement>('circle.body')
       .attr('r', (d) => this.nodeRadius(d))
       .attr('fill', (d) => this.colorScale(d.depth))
       .attr('fill-opacity', this.theme === 'light' ? 1 : 0.92)
-      .attr('stroke', (d) => (d3.color(this.colorScale(d.depth)) as d3.RGBColor).brighter(this.theme === 'light' ? 0.4 : 0.6).formatHex())
-      .attr('stroke-width', 1.5)
-      .attr('cursor', 'pointer');
+      .attr('stroke', (d) => this.strokeColorFor(d))
+      .attr('stroke-width', 1.5);
 
-    inner.append('text')
+    selection.select<SVGTextElement>('text')
       .text((d) => d.label)
       .attr('dy', (d) => this.nodeRadius(d) + 13)
-      .attr('text-anchor', 'middle')
       .attr('fill', this.tc.labelFill)
       .attr('font-size', (d) => (d.depth === 0 ? 13 : 11))
-      .attr('font-weight', (d) => (d.depth === 0 ? '600' : '400'))
-      .attr('font-family', '"Inter", "Public Sans", "Segoe UI", system-ui, sans-serif')
-      .attr('pointer-events', 'none');
+      .attr('font-weight', (d) => (d.depth === 0 ? '600' : '400'));
 
-    inner.append('circle')
-      .attr('class', 'badge')
-      .attr('r', 4)
+    selection.select<SVGCircleElement>('circle.badge')
       .attr('cx', (d) => this.nodeRadius(d))
       .attr('cy', (d) => -this.nodeRadius(d))
       .attr('fill', this.tc.badgeFill)
-      .attr('pointer-events', 'none')
-      .attr('opacity', 0);
+      .attr('opacity', (d) => (d._children && d._children.length ? 1 : 0));
   }
 
   private nodeRadius(d: D3Node): number {
-    return d.depth === 0 ? 18 : d.depth === 1 ? 12 : 8;
+    return NODE_RADII[Math.min(d.depth, NODE_RADII.length - 1)];
   }
 
   // ── Tick ───────────────────────────────────────────────────────────────────
@@ -398,18 +495,13 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     }
 
     this.redraw();
-    requestAnimationFrame(() => this.updateBadges());
-  }
-
-  private updateBadges(): void {
-    this.g.select('.nodes').selectAll<SVGCircleElement, D3Node>('circle.badge')
-      .attr('opacity', (d) => (d._children && d._children.length ? 1 : 0));
   }
 
   // ── Drag ───────────────────────────────────────────────────────────────────
 
   private dragBehavior(): d3.DragBehavior<SVGGElement, D3Node, D3Node | d3.SubjectPosition> {
     return d3.drag<SVGGElement, D3Node>()
+      .clickDistance(DRAG_CLICK_DISTANCE)
       .on('start', (event, d) => {
         if (!event.active) this.simulation.alphaTarget(0.3).restart();
         d.fx = d.x;

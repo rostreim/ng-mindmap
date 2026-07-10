@@ -1,0 +1,147 @@
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { MindmapComponent } from './mindmap';
+import { D3Link, D3Node, MindmapNode } from './mindmap.model';
+
+// These tests exercise buildTree/flattenVisible/toggleCollapse directly without triggering
+// ngOnInit (no fixture.detectChanges()), since ngOnInit sets up the D3 zoom/SVG pipeline,
+// which needs real SVG geometry APIs (e.g. viewBox.baseVal) that jsdom doesn't implement.
+describe('MindmapComponent data functions', () => {
+  let fixture: ComponentFixture<MindmapComponent>;
+  let component: MindmapComponent;
+
+  const sampleData: MindmapNode = {
+    id: 'root',
+    label: 'Root',
+    children: [
+      {
+        id: 'a',
+        label: 'A',
+        children: [
+          { id: 'a1', label: 'A1' },
+          { id: 'a2', label: 'A2' },
+        ],
+      },
+      { id: 'b', label: 'B' },
+    ],
+  };
+
+  beforeEach(async () => {
+    await TestBed.configureTestingModule({
+      imports: [MindmapComponent],
+    }).compileComponents();
+
+    fixture = TestBed.createComponent(MindmapComponent);
+    component = fixture.componentInstance;
+    component.data = sampleData;
+  });
+
+  afterEach(() => {
+    fixture.destroy();
+  });
+
+  describe('buildTree', () => {
+    it('converts a MindmapNode tree into a D3Node tree, preserving structure and depth', () => {
+      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
+
+      expect(tree.id).toBe('root');
+      expect(tree.depth).toBe(0);
+      expect(tree.parent).toBeNull();
+      expect(tree.children?.length).toBe(2);
+
+      const [a, b] = tree.children!;
+      expect(a.id).toBe('a');
+      expect(a.depth).toBe(1);
+      expect(a.parent).toBe(tree);
+      expect(a.children?.map((c) => c.id)).toEqual(['a1', 'a2']);
+      expect(a.children![0].depth).toBe(2);
+      expect(a.children![0].parent).toBe(a);
+
+      expect(b.id).toBe('b');
+      expect(b.children).toEqual([]);
+    });
+
+    it('initializes fresh collapse state regardless of any prior state on the source node', () => {
+      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
+
+      expect(tree.collapsed).toBe(false);
+      expect(tree._children).toBeNull();
+    });
+  });
+
+  describe('flattenVisible', () => {
+    it('flattens the visible tree into parallel nodes and links arrays', () => {
+      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
+      const nodes: D3Node[] = [];
+      const links: D3Link[] = [];
+      (component as any).flattenVisible(tree, nodes, links);
+
+      expect(nodes.map((n) => n.id)).toEqual(['root', 'a', 'a1', 'a2', 'b']);
+      expect(links.map((l) => `${l.source.id}->${l.target.id}`)).toEqual([
+        'root->a',
+        'a->a1',
+        'a->a2',
+        'root->b',
+      ]);
+    });
+
+    it('excludes a collapsed subtree from the flattened output', () => {
+      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
+      const a = tree.children![0];
+      a._children = a.children;
+      a.children = [];
+
+      const nodes: D3Node[] = [];
+      const links: D3Link[] = [];
+      (component as any).flattenVisible(tree, nodes, links);
+
+      expect(nodes.map((n) => n.id)).toEqual(['root', 'a', 'b']);
+      expect(links.map((l) => `${l.source.id}->${l.target.id}`)).toEqual(['root->a', 'root->b']);
+    });
+  });
+
+  describe('toggleCollapse', () => {
+    beforeEach(() => {
+      // toggleCollapse always ends by calling redraw(), which drives the D3/SVG pipeline.
+      // That's exercised separately in the browser; here we isolate the children/_children
+      // state transition, which is the part of toggleCollapse worth unit testing.
+      vi.spyOn(component as any, 'redraw').mockImplementation(() => {});
+    });
+
+    it('moves visible children into _children and marks the node collapsed', () => {
+      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
+      (component as any).rootNode = tree;
+      const a = tree.children![0];
+
+      (component as any).toggleCollapse(a);
+
+      expect(a.collapsed).toBe(true);
+      expect(a.children).toEqual([]);
+      expect(a._children?.map((c) => c.id)).toEqual(['a1', 'a2']);
+    });
+
+    it('restores _children back into children and clears collapsed state on the next toggle', () => {
+      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
+      (component as any).rootNode = tree;
+      const a = tree.children![0];
+
+      (component as any).toggleCollapse(a);
+      (component as any).toggleCollapse(a);
+
+      expect(a.collapsed).toBe(false);
+      expect(a._children).toBeNull();
+      expect(a.children?.map((c) => c.id)).toEqual(['a1', 'a2']);
+    });
+
+    it('is a no-op for a leaf node with no children in either direction', () => {
+      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
+      (component as any).rootNode = tree;
+      const b = tree.children![1];
+
+      (component as any).toggleCollapse(b);
+
+      expect(b.collapsed).toBe(false);
+      expect(b.children).toEqual([]);
+      expect(b._children).toBeNull();
+    });
+  });
+});
