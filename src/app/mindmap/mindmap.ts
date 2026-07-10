@@ -333,6 +333,61 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     nodeSelection.filter((n) => n.id === d.id).node()?.focus();
   }
 
+  private onNodeKeydown(event: KeyboardEvent, d: D3Node): void {
+    switch (event.key) {
+      case 'ArrowDown': {
+        event.preventDefault();
+        const next = this.nextVisible(this.visibleNodes, d.id);
+        if (next) this.moveFocusTo(next);
+        break;
+      }
+      case 'ArrowUp': {
+        event.preventDefault();
+        const prev = this.previousVisible(this.visibleNodes, d.id);
+        if (prev) this.moveFocusTo(prev);
+        break;
+      }
+      case 'ArrowRight': {
+        event.preventDefault();
+        if (d._children && d._children.length) {
+          this.toggleCollapse(d);
+        } else {
+          const child = this.firstChild(d);
+          if (child) this.moveFocusTo(child);
+        }
+        break;
+      }
+      case 'ArrowLeft': {
+        event.preventDefault();
+        if (d.children && d.children.length) {
+          this.toggleCollapse(d);
+        } else if (d.parent) {
+          this.moveFocusTo(d.parent);
+        }
+        break;
+      }
+      case 'Enter':
+      case ' ': {
+        event.preventDefault();
+        if (this.nodeClickFn?.(d.sourceNode) === true) return;
+        this.toggleCollapse(d);
+        break;
+      }
+      case 'Home': {
+        event.preventDefault();
+        const first = this.firstVisible(this.visibleNodes);
+        if (first) this.moveFocusTo(first);
+        break;
+      }
+      case 'End': {
+        event.preventDefault();
+        const last = this.lastVisible(this.visibleNodes);
+        if (last) this.moveFocusTo(last);
+        break;
+      }
+    }
+  }
+
   // ── Render / re-render ─────────────────────────────────────────────────────
 
   private render(): void {
@@ -471,7 +526,8 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
           .attr('stroke-opacity', this.tc.edgeOpacity)
           .attr('stroke-width', 1.5)
           .attr('stroke', this.tc.edgeStroke);
-      });
+      })
+      .on('keydown', (event: KeyboardEvent, d: D3Node) => this.zone.run(() => this.onNodeKeydown(event, d)));
 
     const inner = nodeGroup.append('g').attr('class', 'node-scale');
     inner.append('circle').attr('class', 'halo').attr('filter', 'url(#mm-glow)');
@@ -553,7 +609,15 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     const hasHidden = d._children && d._children.length > 0;
     if (!hasVisible && !hasHidden) return;
 
+    let refocusTarget: D3Node | null = null;
+
     if (hasVisible) {
+      if (this.focusedNodeId && this.focusedNodeId !== d.id) {
+        const focused = this.visibleNodes.find((n) => n.id === this.focusedNodeId);
+        if (focused && this.isDescendantOf(focused, d)) {
+          refocusTarget = d;
+        }
+      }
       d._children = d.children;
       d.children = [];
       d.collapsed = true;
@@ -564,6 +628,10 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     }
 
     this.redraw();
+
+    if (refocusTarget) {
+      this.moveFocusTo(refocusTarget);
+    }
   }
 
   // ── Drag ───────────────────────────────────────────────────────────────────
