@@ -90,6 +90,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
   @Input() theme: MindmapTheme = 'dark';
   @Input() contextMenuFn?: ContextMenuFn;
   @Input() nodeClickFn?: NodeClickFn;
+  @Input() ariaLabel = 'Mind map';
 
   @ViewChild('svgContainer', { static: true }) svgRef!: ElementRef<SVGSVGElement>;
 
@@ -99,6 +100,11 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
   readonly menuX = signal(0);
   readonly menuY = signal(0);
   readonly menuEntries = signal<MenuEntry[]>([]);
+  private menuOpenerNodeId: string | null = null;
+  readonly menuFocusIndex = signal(0);
+  readonly submenuOpenIndex = signal<number | null>(null);
+
+  @ViewChild('menuRoot') menuRootRef?: ElementRef<HTMLDivElement>;
 
   // Attached outside the Angular zone (see constructor) so a click/keydown anywhere in the
   // document doesn't schedule change detection unless the menu is actually open.
@@ -109,6 +115,11 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
   private readonly onDocumentKeydown = (event: KeyboardEvent): void => {
     if (event.key === 'Escape' && this.menuOpen()) {
       this.zone.run(() => this.menuOpen.set(false));
+      const opener = this.menuOpenerNodeId
+        ? this.visibleNodes.find((n) => n.id === this.menuOpenerNodeId)
+        : null;
+      if (opener) this.moveFocusTo(opener);
+      this.menuOpenerNodeId = null;
     }
   };
 
@@ -117,6 +128,111 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     if (entry.disabled || entry.children?.length) return;
     entry.action();
     this.menuOpen.set(false);
+  }
+
+  isMenuItemActive(index: number, isSubmenu: boolean, parentIndex?: number): boolean {
+    if (isSubmenu) {
+      return this.submenuOpenIndex() === parentIndex && this.menuFocusIndex() === index;
+    }
+    return this.submenuOpenIndex() === null && this.menuFocusIndex() === index;
+  }
+
+  // ── Context menu keyboard navigation ────────────────────────────────────────
+
+  private isFocusableMenuEntry(entry: MenuEntry): boolean {
+    return entry.type === 'item' && !entry.disabled;
+  }
+
+  private nextMenuIndex(entries: MenuEntry[], from: number, direction: 1 | -1): number {
+    const n = entries.length;
+    let i = from;
+    for (let step = 0; step < n; step++) {
+      i = (i + direction + n) % n;
+      if (this.isFocusableMenuEntry(entries[i])) return i;
+    }
+    return from;
+  }
+
+  private firstMenuIndex(entries: MenuEntry[]): number {
+    const i = entries.findIndex((e) => this.isFocusableMenuEntry(e));
+    return i === -1 ? 0 : i;
+  }
+
+  private lastMenuIndex(entries: MenuEntry[]): number {
+    for (let i = entries.length - 1; i >= 0; i--) {
+      if (this.isFocusableMenuEntry(entries[i])) return i;
+    }
+    return 0;
+  }
+
+  private focusActiveMenuItem(): void {
+    // setTimeout (a macrotask), not queueMicrotask: Angular's zone-triggered change detection
+    // runs on the microtask queue, so a microtask here can race ahead of the DOM update that
+    // creates/moves the tabindex="0" item. A macrotask is guaranteed to run after CD settles.
+    setTimeout(() => {
+      this.menuRootRef?.nativeElement.querySelector<HTMLElement>('[tabindex="0"]')?.focus();
+    });
+  }
+
+  onMenuKeydown(event: KeyboardEvent): void {
+    const inSubmenu = this.submenuOpenIndex() !== null;
+    const entries = inSubmenu
+      ? (this.menuEntries()[this.submenuOpenIndex()!] as MenuEntry & { type: 'item' }).children!
+      : this.menuEntries();
+
+    switch (event.key) {
+      case 'ArrowDown':
+        event.preventDefault();
+        this.menuFocusIndex.set(this.nextMenuIndex(entries, this.menuFocusIndex(), 1));
+        break;
+      case 'ArrowUp':
+        event.preventDefault();
+        this.menuFocusIndex.set(this.nextMenuIndex(entries, this.menuFocusIndex(), -1));
+        break;
+      case 'Home':
+        event.preventDefault();
+        this.menuFocusIndex.set(this.firstMenuIndex(entries));
+        break;
+      case 'End':
+        event.preventDefault();
+        this.menuFocusIndex.set(this.lastMenuIndex(entries));
+        break;
+      case 'ArrowRight': {
+        if (inSubmenu) break;
+        const current = entries[this.menuFocusIndex()];
+        if (current?.type === 'item' && current.children?.length) {
+          event.preventDefault();
+          this.submenuOpenIndex.set(this.menuFocusIndex());
+          this.menuFocusIndex.set(this.firstMenuIndex(current.children));
+        }
+        break;
+      }
+      case 'ArrowLeft': {
+        if (inSubmenu) {
+          event.preventDefault();
+          this.menuFocusIndex.set(this.submenuOpenIndex()!);
+          this.submenuOpenIndex.set(null);
+        }
+        break;
+      }
+      case 'Enter':
+      case ' ': {
+        event.preventDefault();
+        const active = entries[this.menuFocusIndex()];
+        if (active?.type === 'item' && !active.disabled) {
+          if (active.children?.length) {
+            this.submenuOpenIndex.set(this.menuFocusIndex());
+            this.menuFocusIndex.set(this.firstMenuIndex(active.children));
+          } else {
+            active.action();
+            this.menuOpen.set(false);
+          }
+        }
+        break;
+      }
+    }
+
+    this.focusActiveMenuItem();
   }
 
   // ── D3 internals ─────────────────────────────────────────────────────────
@@ -133,6 +249,8 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
 
   private colorScale!: d3.ScaleOrdinal<number, string>;
   private strokeColorByDepth: string[] = [];
+  private visibleNodes: D3Node[] = [];
+  private focusedNodeId: string | null = null;
 
   constructor(private zone: NgZone, private destroyRef: DestroyRef) {
     this.zone.runOutsideAngular(() => {
@@ -177,7 +295,9 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
   private initSvg(): void {
     this.svg = d3.select(this.svgRef.nativeElement)
       .attr('width', this.width)
-      .attr('height', this.height);
+      .attr('height', this.height)
+      .attr('role', 'tree')
+      .attr('aria-label', this.ariaLabel);
 
     this.svg.append('rect')
       .attr('class', 'mm-bg')
@@ -282,10 +402,123 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     });
   }
 
+  // ── Tree navigation (keyboard) ──────────────────────────────────────────────
+
+  private nextVisible(nodes: D3Node[], id: string): D3Node | null {
+    const i = nodes.findIndex((n) => n.id === id);
+    if (i === -1 || i === nodes.length - 1) return null;
+    return nodes[i + 1];
+  }
+
+  private previousVisible(nodes: D3Node[], id: string): D3Node | null {
+    const i = nodes.findIndex((n) => n.id === id);
+    if (i <= 0) return null;
+    return nodes[i - 1];
+  }
+
+  private firstVisible(nodes: D3Node[]): D3Node | null {
+    return nodes[0] ?? null;
+  }
+
+  private lastVisible(nodes: D3Node[]): D3Node | null {
+    return nodes.length ? nodes[nodes.length - 1] : null;
+  }
+
+  private firstChild(d: D3Node): D3Node | null {
+    return d.children && d.children.length ? d.children[0] : null;
+  }
+
+  private isDescendantOf(node: D3Node, ancestor: D3Node): boolean {
+    let cur = node.parent;
+    while (cur) {
+      if (cur.id === ancestor.id) return true;
+      cur = cur.parent;
+    }
+    return false;
+  }
+
+  private applyTabindex(selection: d3.Selection<SVGGElement, D3Node, SVGGElement, unknown>): void {
+    selection.attr('tabindex', (d) => (d.id === this.focusedNodeId ? 0 : -1));
+  }
+
+  private moveFocusTo(d: D3Node): void {
+    this.focusedNodeId = d.id;
+    const nodeSelection = this.g.select<SVGGElement>('.nodes').selectAll<SVGGElement, D3Node>('g.node');
+    this.applyTabindex(nodeSelection);
+    nodeSelection.filter((n) => n.id === d.id).node()?.focus();
+  }
+
+  private onNodeKeydown(event: KeyboardEvent, d: D3Node): void {
+    switch (event.key) {
+      case 'ArrowDown': {
+        event.preventDefault();
+        const next = this.nextVisible(this.visibleNodes, d.id);
+        if (next) this.moveFocusTo(next);
+        break;
+      }
+      case 'ArrowUp': {
+        event.preventDefault();
+        const prev = this.previousVisible(this.visibleNodes, d.id);
+        if (prev) this.moveFocusTo(prev);
+        break;
+      }
+      case 'ArrowRight': {
+        event.preventDefault();
+        if (d._children && d._children.length) {
+          this.toggleCollapse(d);
+        } else {
+          const child = this.firstChild(d);
+          if (child) this.moveFocusTo(child);
+        }
+        break;
+      }
+      case 'ArrowLeft': {
+        event.preventDefault();
+        if (d.children && d.children.length) {
+          this.toggleCollapse(d);
+        } else if (d.parent) {
+          this.moveFocusTo(d.parent);
+        }
+        break;
+      }
+      case 'Enter':
+      case ' ': {
+        event.preventDefault();
+        if (this.nodeClickFn?.(d.sourceNode) === true) return;
+        this.toggleCollapse(d);
+        break;
+      }
+      case 'Home': {
+        event.preventDefault();
+        const first = this.firstVisible(this.visibleNodes);
+        if (first) this.moveFocusTo(first);
+        break;
+      }
+      case 'End': {
+        event.preventDefault();
+        const last = this.lastVisible(this.visibleNodes);
+        if (last) this.moveFocusTo(last);
+        break;
+      }
+      case 'F10': {
+        if (!event.shiftKey) return;
+        event.preventDefault();
+        this.openContextMenuForNode(d);
+        break;
+      }
+      case 'ContextMenu': {
+        event.preventDefault();
+        this.openContextMenuForNode(d);
+        break;
+      }
+    }
+  }
+
   // ── Render / re-render ─────────────────────────────────────────────────────
 
   private render(): void {
     this.rootNode = this.buildTree(this.data, null, 0);
+    this.focusedNodeId = this.rootNode.id;
     this.redraw();
   }
 
@@ -294,6 +527,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     const nodes: D3Node[] = [];
     const links: D3Link[] = [];
     this.flattenVisible(this.rootNode, nodes, links);
+    this.visibleNodes = nodes;
     this.zone.runOutsideAngular(() => this.syncSimulation(nodes, links));
   }
 
@@ -370,6 +604,33 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       );
 
     this.applyNodeTheme(merged);
+    this.applyNodeAria(merged);
+    this.applyTabindex(merged);
+  }
+
+  private openContextMenu(d: D3Node, x: number, y: number): void {
+    if (!this.contextMenuFn) return;
+    this.contextMenuFn(d.sourceNode).then((entries) => {
+      this.zone.run(() => {
+        this.menuEntries.set(entries);
+        this.menuX.set(x);
+        this.menuY.set(y);
+        this.menuOpenerNodeId = d.id;
+        this.submenuOpenIndex.set(null);
+        this.menuFocusIndex.set(this.firstMenuIndex(entries));
+        this.menuOpen.set(true);
+      });
+      this.focusActiveMenuItem();
+    });
+  }
+
+  private openContextMenuForNode(d: D3Node): void {
+    const el = this.g.select<SVGGElement>('.nodes').selectAll<SVGGElement, D3Node>('g.node')
+      .filter((n) => n.id === d.id).node();
+    const rect = el?.getBoundingClientRect();
+    const x = rect ? rect.left + rect.width / 2 : 0;
+    const y = rect ? rect.top + rect.height / 2 : 0;
+    this.openContextMenu(d, x, y);
   }
 
   /** Structural setup for newly-entering nodes only: DOM shape + interaction handlers. */
@@ -386,17 +647,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .on('contextmenu', (event: MouseEvent, d: D3Node) => {
         event.preventDefault();
         event.stopPropagation();
-        if (!this.contextMenuFn) return;
-        const x = event.clientX;
-        const y = event.clientY;
-        this.contextMenuFn(d.sourceNode).then((entries) => {
-          this.zone.run(() => {
-            this.menuEntries.set(entries);
-            this.menuX.set(x);
-            this.menuY.set(y);
-            this.menuOpen.set(true);
-          });
-        });
+        this.openContextMenu(d, event.clientX, event.clientY);
       })
       .on('mouseover', (_event, d) => {
         this.g.select('.links').selectAll<SVGLineElement, D3Link>('line')
@@ -416,7 +667,8 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
           .attr('stroke-opacity', this.tc.edgeOpacity)
           .attr('stroke-width', 1.5)
           .attr('stroke', this.tc.edgeStroke);
-      });
+      })
+      .on('keydown', (event: KeyboardEvent, d: D3Node) => this.zone.run(() => this.onNodeKeydown(event, d)));
 
     const inner = nodeGroup.append('g').attr('class', 'node-scale');
     inner.append('circle').attr('class', 'halo').attr('filter', 'url(#mm-glow)');
@@ -460,6 +712,20 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .attr('opacity', (d) => (d._children && d._children.length ? 1 : 0));
   }
 
+  /** ARIA treeitem semantics — role/level/expanded/setsize/posinset. Flat DOM (see design doc). */
+  private applyNodeAria(selection: d3.Selection<SVGGElement, D3Node, SVGGElement, unknown>): void {
+    selection
+      .attr('role', 'treeitem')
+      .attr('aria-label', (d) => d.label)
+      .attr('aria-level', (d) => d.depth + 1)
+      .attr('aria-setsize', (d) => (d.parent ? (d.parent.children?.length ?? 1) : 1))
+      .attr('aria-posinset', (d) => (d.parent ? (d.parent.children?.indexOf(d) ?? 0) + 1 : 1))
+      .attr('aria-expanded', (d) => {
+        const hasChildren = !!(d.children?.length || d._children?.length);
+        return hasChildren ? String(!!d.children?.length) : null;
+      });
+  }
+
   private nodeRadius(d: D3Node): number {
     return NODE_RADII[Math.min(d.depth, NODE_RADII.length - 1)];
   }
@@ -484,7 +750,15 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     const hasHidden = d._children && d._children.length > 0;
     if (!hasVisible && !hasHidden) return;
 
+    let refocusTarget: D3Node | null = null;
+
     if (hasVisible) {
+      if (this.focusedNodeId && this.focusedNodeId !== d.id) {
+        const focused = this.visibleNodes.find((n) => n.id === this.focusedNodeId);
+        if (focused && this.isDescendantOf(focused, d)) {
+          refocusTarget = d;
+        }
+      }
       d._children = d.children;
       d.children = [];
       d.collapsed = true;
@@ -495,6 +769,10 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     }
 
     this.redraw();
+
+    if (refocusTarget) {
+      this.moveFocusTo(refocusTarget);
+    }
   }
 
   // ── Drag ───────────────────────────────────────────────────────────────────

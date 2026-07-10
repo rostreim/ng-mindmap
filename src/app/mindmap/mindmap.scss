@@ -22,6 +22,10 @@
   color: #585b70;
 }
 
+:host([data-theme='dark']) ::ng-deep .node:focus-visible {
+  outline-color: #f38ba8;
+}
+
 // ── Light theme ───────────────────────────────────────────────────────────────
 // Colours from nFocus TraxCommunityPortal design tokens:
 //   border  → Greys-200 (#e9eaeb)
@@ -38,6 +42,10 @@
   color: #a4a7ae;   // nFocus Greys-400
 }
 
+:host([data-theme='light']) ::ng-deep .node:focus-visible {
+  outline-color: #d4044b;
+}
+
 // ── Shared ────────────────────────────────────────────────────────────────────
 
 .mindmap-svg {
@@ -46,6 +54,12 @@
 }
 
 :host ::ng-deep {
+  // Suppress the default UA focus ring on mouse-click focus; :focus-visible below
+  // (keyboard-driven focus) supplies the deliberate themed ring instead.
+  .node:focus {
+    outline: none;
+  }
+
   // Inner group carries the scale so D3's translate on the outer .node is
   // untouched. fill-box + center origin scales from the node's own centre.
   .node-scale {
@@ -62,6 +76,12 @@
   .node:hover circle.body {
     filter: brightness(1.18);
     transition: filter 0.15s ease;
+  }
+
+  .node:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 3px;
+    border-radius: 50%;
   }
 }
 
@@ -187,6 +207,13 @@
   // Show immediately — no delay on open
   transition: opacity 120ms ease, visibility 0s, pointer-events 0s;
   animation: mm-menu-in 120ms cubic-bezier(0.0, 0, 0.2, 1) both;
+}
+
+.mm-item--has-sub.mm-item--sub-open > .mm-submenu {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: opacity 120ms ease, visibility 0s, pointer-events 0s;
 }
 
 // ── Theme variants ────────────────────────────────────────────────────────────
