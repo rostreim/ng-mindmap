@@ -54,6 +54,12 @@
 }
 
 :host ::ng-deep {
+  // Suppress the default UA focus ring on mouse-click focus; :focus-visible below
+  // (keyboard-driven focus) supplies the deliberate themed ring instead.
+  .node:focus {
+    outline: none;
+  }
+
   // Inner group carries the scale so D3's translate on the outer .node is
   // untouched. fill-box + center origin scales from the node's own centre.
   .node-scale {
