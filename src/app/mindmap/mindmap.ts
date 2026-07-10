@@ -126,6 +126,34 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     this.menuOpen.set(false);
   }
 
+  // ── Context menu keyboard navigation ────────────────────────────────────────
+
+  private isFocusableMenuEntry(entry: MenuEntry): boolean {
+    return entry.type === 'item' && !entry.disabled;
+  }
+
+  private nextMenuIndex(entries: MenuEntry[], from: number, direction: 1 | -1): number {
+    const n = entries.length;
+    let i = from;
+    for (let step = 0; step < n; step++) {
+      i = (i + direction + n) % n;
+      if (this.isFocusableMenuEntry(entries[i])) return i;
+    }
+    return from;
+  }
+
+  private firstMenuIndex(entries: MenuEntry[]): number {
+    const i = entries.findIndex((e) => this.isFocusableMenuEntry(e));
+    return i === -1 ? 0 : i;
+  }
+
+  private lastMenuIndex(entries: MenuEntry[]): number {
+    for (let i = entries.length - 1; i >= 0; i--) {
+      if (this.isFocusableMenuEntry(entries[i])) return i;
+    }
+    return 0;
+  }
+
   // ── D3 internals ─────────────────────────────────────────────────────────
 
   private svg!: d3.Selection<SVGSVGElement, unknown, null, undefined>;
