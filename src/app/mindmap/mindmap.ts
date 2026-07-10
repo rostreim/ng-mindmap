@@ -90,6 +90,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
   @Input() theme: MindmapTheme = 'dark';
   @Input() contextMenuFn?: ContextMenuFn;
   @Input() nodeClickFn?: NodeClickFn;
+  @Input() ariaLabel = 'Mind map';
 
   @ViewChild('svgContainer', { static: true }) svgRef!: ElementRef<SVGSVGElement>;
 
@@ -178,7 +179,9 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
   private initSvg(): void {
     this.svg = d3.select(this.svgRef.nativeElement)
       .attr('width', this.width)
-      .attr('height', this.height);
+      .attr('height', this.height)
+      .attr('role', 'tree')
+      .attr('aria-label', this.ariaLabel);
 
     this.svg.append('rect')
       .attr('class', 'mm-bg')
@@ -407,6 +410,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       );
 
     this.applyNodeTheme(merged);
+    this.applyNodeAria(merged);
   }
 
   /** Structural setup for newly-entering nodes only: DOM shape + interaction handlers. */
@@ -495,6 +499,20 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .attr('cy', (d) => -this.nodeRadius(d))
       .attr('fill', this.tc.badgeFill)
       .attr('opacity', (d) => (d._children && d._children.length ? 1 : 0));
+  }
+
+  /** ARIA treeitem semantics — role/level/expanded/setsize/posinset. Flat DOM (see design doc). */
+  private applyNodeAria(selection: d3.Selection<SVGGElement, D3Node, SVGGElement, unknown>): void {
+    selection
+      .attr('role', 'treeitem')
+      .attr('aria-label', (d) => d.label)
+      .attr('aria-level', (d) => d.depth + 1)
+      .attr('aria-setsize', (d) => (d.parent ? (d.parent.children?.length ?? 1) : 1))
+      .attr('aria-posinset', (d) => (d.parent ? (d.parent.children?.indexOf(d) ?? 0) + 1 : 1))
+      .attr('aria-expanded', (d) => {
+        const hasChildren = !!(d.children?.length || d._children?.length);
+        return hasChildren ? String(!!d.children?.length) : null;
+      });
   }
 
   private nodeRadius(d: D3Node): number {
