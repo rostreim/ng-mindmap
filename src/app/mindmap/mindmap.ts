@@ -100,6 +100,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
   readonly menuX = signal(0);
   readonly menuY = signal(0);
   readonly menuEntries = signal<MenuEntry[]>([]);
+  private menuOpenerNodeId: string | null = null;
 
   // Attached outside the Angular zone (see constructor) so a click/keydown anywhere in the
   // document doesn't schedule change detection unless the menu is actually open.
@@ -110,6 +111,11 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
   private readonly onDocumentKeydown = (event: KeyboardEvent): void => {
     if (event.key === 'Escape' && this.menuOpen()) {
       this.zone.run(() => this.menuOpen.set(false));
+      const opener = this.menuOpenerNodeId
+        ? this.visibleNodes.find((n) => n.id === this.menuOpenerNodeId)
+        : null;
+      if (opener) this.moveFocusTo(opener);
+      this.menuOpenerNodeId = null;
     }
   };
 
@@ -385,6 +391,17 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
         if (last) this.moveFocusTo(last);
         break;
       }
+      case 'F10': {
+        if (!event.shiftKey) return;
+        event.preventDefault();
+        this.openContextMenuForNode(d);
+        break;
+      }
+      case 'ContextMenu': {
+        event.preventDefault();
+        this.openContextMenuForNode(d);
+        break;
+      }
     }
   }
 
@@ -482,6 +499,28 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     this.applyTabindex(merged);
   }
 
+  private openContextMenu(d: D3Node, x: number, y: number): void {
+    if (!this.contextMenuFn) return;
+    this.contextMenuFn(d.sourceNode).then((entries) => {
+      this.zone.run(() => {
+        this.menuEntries.set(entries);
+        this.menuX.set(x);
+        this.menuY.set(y);
+        this.menuOpen.set(true);
+        this.menuOpenerNodeId = d.id;
+      });
+    });
+  }
+
+  private openContextMenuForNode(d: D3Node): void {
+    const el = this.g.select<SVGGElement>('.nodes').selectAll<SVGGElement, D3Node>('g.node')
+      .filter((n) => n.id === d.id).node();
+    const rect = el?.getBoundingClientRect();
+    const x = rect ? rect.left + rect.width / 2 : 0;
+    const y = rect ? rect.top + rect.height / 2 : 0;
+    this.openContextMenu(d, x, y);
+  }
+
   /** Structural setup for newly-entering nodes only: DOM shape + interaction handlers. */
   private enterNodes(
     enter: d3.Selection<d3.EnterElement, D3Node, SVGGElement, unknown>,
@@ -496,17 +535,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .on('contextmenu', (event: MouseEvent, d: D3Node) => {
         event.preventDefault();
         event.stopPropagation();
-        if (!this.contextMenuFn) return;
-        const x = event.clientX;
-        const y = event.clientY;
-        this.contextMenuFn(d.sourceNode).then((entries) => {
-          this.zone.run(() => {
-            this.menuEntries.set(entries);
-            this.menuX.set(x);
-            this.menuY.set(y);
-            this.menuOpen.set(true);
-          });
-        });
+        this.openContextMenu(d, event.clientX, event.clientY);
       })
       .on('mouseover', (_event, d) => {
         this.g.select('.links').selectAll<SVGLineElement, D3Link>('line')
