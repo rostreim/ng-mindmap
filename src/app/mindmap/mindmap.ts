@@ -135,6 +135,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
   private colorScale!: d3.ScaleOrdinal<number, string>;
   private strokeColorByDepth: string[] = [];
   private visibleNodes: D3Node[] = [];
+  private focusedNodeId: string | null = null;
 
   constructor(private zone: NgZone, private destroyRef: DestroyRef) {
     this.zone.runOutsideAngular(() => {
@@ -321,10 +322,22 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     return false;
   }
 
+  private applyTabindex(selection: d3.Selection<SVGGElement, D3Node, SVGGElement, unknown>): void {
+    selection.attr('tabindex', (d) => (d.id === this.focusedNodeId ? 0 : -1));
+  }
+
+  private moveFocusTo(d: D3Node): void {
+    this.focusedNodeId = d.id;
+    const nodeSelection = this.g.select<SVGGElement>('.nodes').selectAll<SVGGElement, D3Node>('g.node');
+    this.applyTabindex(nodeSelection);
+    nodeSelection.filter((n) => n.id === d.id).node()?.focus();
+  }
+
   // ── Render / re-render ─────────────────────────────────────────────────────
 
   private render(): void {
     this.rootNode = this.buildTree(this.data, null, 0);
+    this.focusedNodeId = this.rootNode.id;
     this.redraw();
   }
 
@@ -411,6 +424,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
 
     this.applyNodeTheme(merged);
     this.applyNodeAria(merged);
+    this.applyTabindex(merged);
   }
 
   /** Structural setup for newly-entering nodes only: DOM shape + interaction handlers. */

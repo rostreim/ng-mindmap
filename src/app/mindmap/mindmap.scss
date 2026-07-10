@@ -22,6 +22,10 @@
   color: #585b70;
 }
 
+:host([data-theme='dark']) ::ng-deep .node:focus-visible {
+  outline-color: #f38ba8;
+}
+
 // ── Light theme ───────────────────────────────────────────────────────────────
 // Colours from nFocus TraxCommunityPortal design tokens:
 //   border  → Greys-200 (#e9eaeb)
@@ -36,6 +40,10 @@
 
 :host([data-theme='light']) .mindmap-hint {
   color: #a4a7ae;   // nFocus Greys-400
+}
+
+:host([data-theme='light']) ::ng-deep .node:focus-visible {
+  outline-color: #d4044b;
 }
 
 // ── Shared ────────────────────────────────────────────────────────────────────
@@ -62,6 +70,12 @@
   .node:hover circle.body {
     filter: brightness(1.18);
     transition: filter 0.15s ease;
+  }
+
+  .node:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 3px;
+    border-radius: 50%;
   }
 }
 
