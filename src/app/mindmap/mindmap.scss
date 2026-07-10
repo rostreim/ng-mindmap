@@ -45,23 +45,7 @@
   user-select: none;
 }
 
-// CSS compositor-driven fade — smoother than JS rAF transitions and
-// unaffected by simulation ticks running concurrently.
-// dim-in is quick to feel responsive; restore is slower for a softer release.
 :host ::ng-deep {
-  .node {
-    transition: opacity 320ms cubic-bezier(0.4, 0, 0.2, 1);
-  }
-
-  .links line {
-    transition: opacity 320ms cubic-bezier(0.4, 0, 0.2, 1);
-  }
-
-  .node.mm-restoring,
-  .links line.mm-restoring {
-    transition: opacity 300ms cubic-bezier(0.0, 0, 0.2, 1);
-  }
-
   // Inner group carries the scale so D3's translate on the outer .node is
   // untouched. fill-box + center origin scales from the node's own centre.
   .node-scale {
@@ -82,11 +66,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :host ::ng-deep .node,
-  :host ::ng-deep .links line {
-    transition: none;
-  }
-
   :host ::ng-deep .node-scale {
     transition: none;
   }

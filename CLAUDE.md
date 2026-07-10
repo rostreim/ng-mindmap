@@ -10,7 +10,7 @@ All commands are run from `mindmap-app/`.
 npm start          # dev server at http://localhost:4200 (use --port N if 4200 is taken)
 npm run build      # production build → dist/mindmap-app/
 npm run watch      # dev build in watch mode (no server)
-npm test           # Karma unit tests
+npm test           # Vitest unit tests (via @angular/build:unit-test, jsdom environment)
 npx tsc --noEmit   # type-check without emitting
 ```
 
