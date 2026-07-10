@@ -101,6 +101,10 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
   readonly menuY = signal(0);
   readonly menuEntries = signal<MenuEntry[]>([]);
   private menuOpenerNodeId: string | null = null;
+  readonly menuFocusIndex = signal(0);
+  readonly submenuOpenIndex = signal<number | null>(null);
+
+  @ViewChild('menuRoot') menuRootRef?: ElementRef<HTMLDivElement>;
 
   // Attached outside the Angular zone (see constructor) so a click/keydown anywhere in the
   // document doesn't schedule change detection unless the menu is actually open.
@@ -124,6 +128,13 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     if (entry.disabled || entry.children?.length) return;
     entry.action();
     this.menuOpen.set(false);
+  }
+
+  isMenuItemActive(index: number, isSubmenu: boolean, parentIndex?: number): boolean {
+    if (isSubmenu) {
+      return this.submenuOpenIndex() === parentIndex && this.menuFocusIndex() === index;
+    }
+    return this.submenuOpenIndex() === null && this.menuFocusIndex() === index;
   }
 
   // ── Context menu keyboard navigation ────────────────────────────────────────
@@ -152,6 +163,76 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       if (this.isFocusableMenuEntry(entries[i])) return i;
     }
     return 0;
+  }
+
+  private focusActiveMenuItem(): void {
+    // setTimeout (a macrotask), not queueMicrotask: Angular's zone-triggered change detection
+    // runs on the microtask queue, so a microtask here can race ahead of the DOM update that
+    // creates/moves the tabindex="0" item. A macrotask is guaranteed to run after CD settles.
+    setTimeout(() => {
+      this.menuRootRef?.nativeElement.querySelector<HTMLElement>('[tabindex="0"]')?.focus();
+    });
+  }
+
+  onMenuKeydown(event: KeyboardEvent): void {
+    const inSubmenu = this.submenuOpenIndex() !== null;
+    const entries = inSubmenu
+      ? (this.menuEntries()[this.submenuOpenIndex()!] as MenuEntry & { type: 'item' }).children!
+      : this.menuEntries();
+
+    switch (event.key) {
+      case 'ArrowDown':
+        event.preventDefault();
+        this.menuFocusIndex.set(this.nextMenuIndex(entries, this.menuFocusIndex(), 1));
+        break;
+      case 'ArrowUp':
+        event.preventDefault();
+        this.menuFocusIndex.set(this.nextMenuIndex(entries, this.menuFocusIndex(), -1));
+        break;
+      case 'Home':
+        event.preventDefault();
+        this.menuFocusIndex.set(this.firstMenuIndex(entries));
+        break;
+      case 'End':
+        event.preventDefault();
+        this.menuFocusIndex.set(this.lastMenuIndex(entries));
+        break;
+      case 'ArrowRight': {
+        if (inSubmenu) break;
+        const current = entries[this.menuFocusIndex()];
+        if (current?.type === 'item' && current.children?.length) {
+          event.preventDefault();
+          this.submenuOpenIndex.set(this.menuFocusIndex());
+          this.menuFocusIndex.set(this.firstMenuIndex(current.children));
+        }
+        break;
+      }
+      case 'ArrowLeft': {
+        if (inSubmenu) {
+          event.preventDefault();
+          this.menuFocusIndex.set(this.submenuOpenIndex()!);
+          this.submenuOpenIndex.set(null);
+        }
+        break;
+      }
+      case 'Enter':
+      case ' ': {
+        event.preventDefault();
+        const active = entries[this.menuFocusIndex()];
+        if (active?.type === 'item' && !active.disabled) {
+          if (active.children?.length) {
+            this.submenuOpenIndex.set(this.menuFocusIndex());
+            this.menuFocusIndex.set(this.firstMenuIndex(active.children));
+          } else {
+            active.action();
+            this.menuOpen.set(false);
+          }
+        }
+        break;
+      }
+    }
+
+    this.focusActiveMenuItem();
   }
 
   // ── D3 internals ─────────────────────────────────────────────────────────
@@ -534,9 +615,12 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
         this.menuEntries.set(entries);
         this.menuX.set(x);
         this.menuY.set(y);
-        this.menuOpen.set(true);
         this.menuOpenerNodeId = d.id;
+        this.submenuOpenIndex.set(null);
+        this.menuFocusIndex.set(this.firstMenuIndex(entries));
+        this.menuOpen.set(true);
       });
+      this.focusActiveMenuItem();
     });
   }
 

@@ -203,6 +203,13 @@
   animation: mm-menu-in 120ms cubic-bezier(0.0, 0, 0.2, 1) both;
 }
 
+.mm-item--has-sub.mm-item--sub-open > .mm-submenu {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: opacity 120ms ease, visibility 0s, pointer-events 0s;
+}
+
 // ── Theme variants ────────────────────────────────────────────────────────────
 
 :host([data-theme='dark']) {
