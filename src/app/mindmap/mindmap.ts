@@ -2,14 +2,13 @@ import {
   Component,
   DestroyRef,
   ElementRef,
-  Input,
-  OnChanges,
   OnDestroy,
   OnInit,
-  SimpleChanges,
   ViewChild,
   ChangeDetectionStrategy,
   NgZone,
+  effect,
+  input,
   signal,
 } from '@angular/core';
 import * as d3 from 'd3';
@@ -100,18 +99,18 @@ const THEMES: Record<MindmapTheme, ThemeConfig> = {
   styleUrl: './mindmap.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
-    '[attr.data-theme]': 'theme',
+    '[attr.data-theme]': 'theme()',
   },
 })
-export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
-  @Input() data!: MindmapNode;
-  @Input() width = 900;
-  @Input() height = 650;
-  @Input() theme: MindmapTheme = 'dark';
-  @Input() contextMenuFn?: ContextMenuFn;
-  @Input() nodeClickFn?: NodeClickFn;
-  @Input() ariaLabel = 'Mind map';
-  @Input() layoutMode: MindmapLayout = 'force';
+export class MindmapComponent implements OnInit, OnDestroy {
+  readonly data = input.required<MindmapNode>();
+  readonly width = input(900);
+  readonly height = input(650);
+  readonly theme = input<MindmapTheme>('dark');
+  readonly contextMenuFn = input<ContextMenuFn>();
+  readonly nodeClickFn = input<NodeClickFn>();
+  readonly ariaLabel = input('Mind map');
+  readonly layoutMode = input<MindmapLayout>('force');
 
   @ViewChild('svgContainer', { static: true }) svgRef!: ElementRef<SVGSVGElement>;
 
@@ -265,7 +264,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
   private rootNode!: D3Node;
 
   private get tc(): ThemeConfig {
-    return THEMES[this.theme];
+    return THEMES[this.theme()];
   }
 
   private colorScale!: d3.ScaleOrdinal<number, string>;
@@ -282,37 +281,47 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       document.removeEventListener('click', this.onDocumentClick);
       document.removeEventListener('keydown', this.onDocumentKeydown);
     });
-  }
 
-  ngOnInit(): void {
-    this.initSvg();
-    if (this.data) this.render();
-  }
+    // Each effect's first run happens once ngOnInit's own initSvg()/render() have already
+    // set up the initial state, so it's skipped here — mirrors the old ngOnChanges'
+    // `!changes[...].firstChange` checks, just per-input instead of via a single dispatcher.
+    let widthHeightFirstRun = true;
+    effect(() => {
+      const width = this.width();
+      const height = this.height();
+      if (widthHeightFirstRun) { widthHeightFirstRun = false; return; }
+      this.svg.attr('width', width).attr('height', height);
+    });
 
-  ngOnChanges(changes: SimpleChanges): void {
-    if (!this.svg) return;
-
-    if (changes['width'] || changes['height']) {
-      this.svg.attr('width', this.width).attr('height', this.height);
-    }
-
-    if (changes['theme']) {
+    let themeFirstRun = true;
+    effect(() => {
+      this.theme();
+      if (themeFirstRun) { themeFirstRun = false; return; }
       this.applyThemeToBackground();
       if (this.rootNode) this.redraw();
-      return;
-    }
+    });
 
-    if (changes['layoutMode'] && !changes['layoutMode'].firstChange) {
+    let layoutModeFirstRun = true;
+    effect(() => {
+      this.layoutMode();
+      if (layoutModeFirstRun) { layoutModeFirstRun = false; return; }
       if (this.rootNode) {
         this.redraw();
         this.zoomToFitAfterSettle();
       }
-      return;
-    }
+    });
 
-    if (changes['data'] && !changes['data'].firstChange) {
+    let dataFirstRun = true;
+    effect(() => {
+      this.data();
+      if (dataFirstRun) { dataFirstRun = false; return; }
       this.render();
-    }
+    });
+  }
+
+  ngOnInit(): void {
+    this.initSvg();
+    this.render();
   }
 
   ngOnDestroy(): void {
@@ -323,10 +332,10 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
 
   private initSvg(): void {
     this.svg = d3.select(this.svgRef.nativeElement)
-      .attr('width', this.width)
-      .attr('height', this.height)
+      .attr('width', this.width())
+      .attr('height', this.height())
       .attr('role', 'tree')
-      .attr('aria-label', this.ariaLabel);
+      .attr('aria-label', this.ariaLabel());
 
     this.svg.append('rect')
       .attr('class', 'mm-bg')
@@ -346,7 +355,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     // a full app-wide change-detection pass — see the constructor for the same pattern.
     this.zone.runOutsideAngular(() => {
       this.svg.call(this.zoomBehavior);
-      this.svg.call(this.zoomBehavior.transform, d3.zoomIdentity.translate(this.width / 2, this.height / 2));
+      this.svg.call(this.zoomBehavior.transform, d3.zoomIdentity.translate(this.width() / 2, this.height() / 2));
     });
   }
 
@@ -370,7 +379,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
   resetView(): void {
     if (!this.svg) return;
     this.svg.transition().duration(this.prefersReducedMotion() ? 0 : FIT_TRANSITION_MS)
-      .call(this.zoomBehavior.transform, d3.zoomIdentity.translate(this.width / 2, this.height / 2));
+      .call(this.zoomBehavior.transform, d3.zoomIdentity.translate(this.width() / 2, this.height() / 2));
   }
 
   /** Pans/scales so every visible node fits in the viewport, within the configured zoom bounds. */
@@ -384,8 +393,8 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       Math.max(
         ZOOM_SCALE_EXTENT[0],
         Math.min(
-          (this.width - FIT_PADDING * 2) / bounds.width,
-          (this.height - FIT_PADDING * 2) / bounds.height,
+          (this.width() - FIT_PADDING * 2) / bounds.width,
+          (this.height() - FIT_PADDING * 2) / bounds.height,
         ),
       ),
     );
@@ -393,7 +402,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     const cy = bounds.y + bounds.height / 2;
 
     const transform = d3.zoomIdentity
-      .translate(this.width / 2, this.height / 2)
+      .translate(this.width() / 2, this.height() / 2)
       .scale(scale)
       .translate(-cx, -cy);
 
@@ -408,7 +417,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
    * duration to elapse in radial mode (which runs no simulation at all).
    */
   private zoomToFitAfterSettle(): void {
-    if (this.layoutMode === 'radial') {
+    if (this.layoutMode() === 'radial') {
       setTimeout(() => this.zoomToFit(), this.prefersReducedMotion() ? 0 : RADIAL_TRANSITION_MS);
       return;
     }
@@ -425,7 +434,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .domain([0, 1, 2, 3, 4, 5])
       .range(this.tc.nodeColors);
 
-    const brighterBy = this.theme === 'light' ? 0.4 : 0.6;
+    const brighterBy = this.theme() === 'light' ? 0.4 : 0.6;
     this.strokeColorByDepth = this.tc.nodeColors.map((color) =>
       (d3.color(color) as d3.RGBColor).brighter(brighterBy).formatHex());
   }
@@ -482,7 +491,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       case 'Enter':
       case ' ': {
         event.preventDefault();
-        if (this.nodeClickFn?.(d.sourceNode) === true) return;
+        if (this.nodeClickFn()?.(d.sourceNode) === true) return;
         this.toggleCollapse(d);
         break;
       }
@@ -515,7 +524,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
   // ── Render / re-render ─────────────────────────────────────────────────────
 
   private render(): void {
-    this.rootNode = buildTree(this.data, null, 0);
+    this.rootNode = buildTree(this.data(), null, 0);
     this.focusedNodeId = this.rootNode.id;
     this.redraw();
   }
@@ -527,13 +536,13 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     flattenVisible(this.rootNode, nodes, links);
     this.visibleNodes = nodes;
 
-    if (this.layoutMode === 'force') {
+    if (this.layoutMode() === 'force') {
       this.zone.runOutsideAngular(() => this.syncForceSimulation(nodes, links));
       return;
     }
 
     computeRadialPositions(this.rootNode);
-    if (this.layoutMode === 'hybrid') {
+    if (this.layoutMode() === 'hybrid') {
       this.zone.runOutsideAngular(() => this.syncHybridSimulation(nodes, links));
     } else {
       this.zone.runOutsideAngular(() => this.syncRadialLayout(nodes, links));
@@ -693,8 +702,9 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   private openContextMenu(d: D3Node, x: number, y: number): void {
-    if (!this.contextMenuFn) return;
-    this.contextMenuFn(d.sourceNode)
+    const contextMenuFn = this.contextMenuFn();
+    if (!contextMenuFn) return;
+    contextMenuFn(d.sourceNode)
       .then((entries) => {
         this.zone.run(() => {
           this.menuEntries.set(entries);
@@ -727,7 +737,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .attr('class', 'node')
       .call(this.dragBehavior())
       .on('click', (_event, d) => this.zone.run(() => {
-        if (this.nodeClickFn?.(d.sourceNode) === true) return;
+        if (this.nodeClickFn()?.(d.sourceNode) === true) return;
         this.toggleCollapse(d);
       }))
       .on('contextmenu', (event: MouseEvent, d: D3Node) => {
@@ -780,7 +790,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     selection.select<SVGCircleElement>('circle.body')
       .attr('r', (d) => nodeRadius(d))
       .attr('fill', (d) => this.colorScale(d.depth))
-      .attr('fill-opacity', this.theme === 'light' ? 1 : 0.92)
+      .attr('fill-opacity', this.theme() === 'light' ? 1 : 0.92)
       .attr('stroke', (d) => this.strokeColorFor(d))
       .attr('stroke-width', 1.5);
 

@@ -35,7 +35,7 @@ describe('MindmapComponent', () => {
 
     fixture = TestBed.createComponent(MindmapComponent);
     component = fixture.componentInstance;
-    component.data = sampleData;
+    fixture.componentRef.setInput('data', sampleData);
   });
 
   afterEach(() => {
