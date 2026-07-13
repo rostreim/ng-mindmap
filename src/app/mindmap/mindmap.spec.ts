@@ -250,4 +250,52 @@ describe('MindmapComponent data functions', () => {
       expect((component as any).lastMenuIndex(allDisabled)).toBe(0);
     });
   });
+
+  describe('computeRadialPositions', () => {
+    it('places a lone root at the origin without dividing by zero', () => {
+      const lone: MindmapNode = { id: 'solo', label: 'Solo' };
+      const tree: D3Node = (component as any).buildTree(lone, null, 0);
+      (component as any).rootNode = tree;
+
+      (component as any).computeRadialPositions();
+
+      expect(tree.targetX).toBeCloseTo(0);
+      expect(tree.targetY).toBeCloseTo(0);
+      expect(Number.isFinite(tree.targetX)).toBe(true);
+      expect(Number.isFinite(tree.targetY)).toBe(true);
+    });
+
+    it('places nodes at increasing radius by depth, with distinct angles for siblings', () => {
+      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
+      (component as any).rootNode = tree;
+
+      (component as any).computeRadialPositions();
+
+      const dist = (n: D3Node) => Math.sqrt(n.targetX! ** 2 + n.targetY! ** 2);
+      const a = tree.children![0];
+      const b = tree.children![1];
+      const [a1, a2] = a.children!;
+
+      expect(dist(tree)).toBeCloseTo(0);
+      expect(dist(a)).toBeGreaterThan(0);
+      expect(dist(a)).toBeCloseTo(dist(b), 5); // same depth => same radius
+      expect(dist(a1)).toBeGreaterThan(dist(a)); // deeper => farther out
+      expect(a1.targetX !== a2.targetX || a1.targetY !== a2.targetY).toBe(true); // distinct angles
+    });
+
+    it('only positions the visible subtree, matching flattenVisible', () => {
+      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
+      const a = tree.children![0];
+      a._children = a.children;
+      a.children = [];
+      (component as any).rootNode = tree;
+
+      (component as any).computeRadialPositions();
+
+      expect(a.targetX).toBeDefined();
+      const [a1, a2] = a._children!;
+      expect(a1.targetX).toBeUndefined();
+      expect(a2.targetX).toBeUndefined();
+    });
+  });
 });

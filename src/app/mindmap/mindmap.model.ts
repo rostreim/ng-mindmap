@@ -15,6 +15,8 @@ export interface D3Node extends SimulationNodeDatum {
   children: D3Node[] | null;
   parent: D3Node | null;
   sourceNode: MindmapNode;
+  targetX?: number;
+  targetY?: number;
 }
 
 export interface D3Link extends SimulationLinkDatum<D3Node> {

@@ -1,5 +1,5 @@
 import { Component, signal } from '@angular/core';
-import { MindmapComponent, MindmapTheme } from './mindmap/mindmap';
+import { MindmapComponent, MindmapLayout, MindmapTheme } from './mindmap/mindmap';
 import { MindmapNode, MenuEntry, NodeClickFn } from './mindmap/mindmap.model';
 
 @Component({
@@ -11,10 +11,18 @@ import { MindmapNode, MenuEntry, NodeClickFn } from './mindmap/mindmap.model';
 })
 export class App {
   readonly theme = signal<MindmapTheme>('dark');
+  readonly layoutMode = signal<MindmapLayout>('force');
   readonly selectedNode = signal<MindmapNode | null>(null);
+
+  private readonly layoutModes: MindmapLayout[] = ['force', 'radial', 'hybrid'];
 
   toggleTheme(): void {
     this.theme.update((t) => (t === 'dark' ? 'light' : 'dark'));
+  }
+
+  cycleLayoutMode(): void {
+    const i = this.layoutModes.indexOf(this.layoutMode());
+    this.layoutMode.set(this.layoutModes[(i + 1) % this.layoutModes.length]);
   }
 
   readonly nodeClickFn: NodeClickFn = (node: MindmapNode): boolean | void => {
