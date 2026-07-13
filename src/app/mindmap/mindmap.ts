@@ -11,7 +11,7 @@ import {
 } from '@angular/core';
 import * as d3 from 'd3';
 import { MindmapGraph, D3GraphNode, D3GraphEdge, MenuEntry, ContextMenuFn, NodeClickFn } from './mindmap.model';
-import { buildGraph, classifyShape, computeVisibleGraph, resolveEntryNode } from './mindmap-layout';
+import { buildGraph, classifyShape, computeVisibleGraph, resolveEntryNode, cycleOutgoingEdge } from './mindmap-layout';
 import { ContextMenuCloseReason, ContextMenuComponent } from './context-menu';
 
 export type MindmapTheme = 'dark' | 'light';
@@ -152,8 +152,12 @@ export class MindmapComponent implements OnInit, OnDestroy {
 
   private colorScale!: d3.ScaleOrdinal<number, string>;
   private strokeColorByDepth: string[] = [];
-  private visibleNodes: D3Node[] = [];
+  private visibleNodes: D3GraphNode[] = [];
   private focusedNodeId: string | null = null;
+  /** Graph-mode only: "currently selected outgoing edge" cursor per node, for ArrowUp/Down. Reset on data change. */
+  private outgoingCursor = new Map<string, number>();
+  /** Graph-mode only: which node ArrowRight was pressed from to reach this node, for ArrowLeft. Reset on data change. */
+  private arrivedVia = new Map<string, string>();
 
   /** Rebuilt once per updateEdges() call so node hover only touches its own incident links, not every link in the graph. */
   private linksByNode = new Map<string, D3Link[]>();
@@ -328,36 +332,47 @@ export class MindmapComponent implements OnInit, OnDestroy {
     nodeSelection.filter((n) => n.id === d.id).node()?.focus();
   }
 
-  private onNodeKeydown(event: KeyboardEvent, d: D3Node): void {
+  private onNodeKeydown(event: KeyboardEvent, d: D3GraphNode): void {
+    if (this.shape === 'tree') {
+      this.onNodeKeydownTree(event, d);
+    } else {
+      this.onNodeKeydownGraph(event, d);
+    }
+  }
+
+  /** Ported unchanged from the old tree-only implementation — visibleNodes is already in DFS order for tree-shaped data, since computeVisibleGraph()'s walk is a DFS from the single root. */
+  private onNodeKeydownTree(event: KeyboardEvent, d: D3GraphNode): void {
     switch (event.key) {
       case 'ArrowDown': {
         event.preventDefault();
-        const next = nextVisible(this.visibleNodes, d.id);
-        if (next) this.moveFocusTo(next);
+        const i = this.visibleNodes.findIndex((n) => n.id === d.id);
+        if (i !== -1 && i < this.visibleNodes.length - 1) this.moveFocusTo(this.visibleNodes[i + 1]);
         break;
       }
       case 'ArrowUp': {
         event.preventDefault();
-        const prev = previousVisible(this.visibleNodes, d.id);
-        if (prev) this.moveFocusTo(prev);
+        const i = this.visibleNodes.findIndex((n) => n.id === d.id);
+        if (i > 0) this.moveFocusTo(this.visibleNodes[i - 1]);
         break;
       }
       case 'ArrowRight': {
         event.preventDefault();
-        if (d._children && d._children.length) {
+        if (d.collapsed) {
           this.toggleCollapse(d);
         } else {
-          const child = firstChild(d);
+          const child = this.allEdges.find((e) => e.source.id === d.id)?.target;
           if (child) this.moveFocusTo(child);
         }
         break;
       }
       case 'ArrowLeft': {
         event.preventDefault();
-        if (d.children && d.children.length) {
+        const hasOutgoing = this.allEdges.some((e) => e.source.id === d.id);
+        const parentEdge = this.allEdges.find((e) => e.target.id === d.id);
+        if (hasOutgoing && !d.collapsed) {
           this.toggleCollapse(d);
-        } else if (d.parent) {
-          this.moveFocusTo(d.parent);
+        } else if (parentEdge) {
+          this.moveFocusTo(parentEdge.source);
         }
         break;
       }
@@ -373,14 +388,78 @@ export class MindmapComponent implements OnInit, OnDestroy {
       }
       case 'Home': {
         event.preventDefault();
-        const first = firstVisible(this.visibleNodes);
-        if (first) this.moveFocusTo(first);
+        if (this.visibleNodes.length) this.moveFocusTo(this.visibleNodes[0]);
         break;
       }
       case 'End': {
         event.preventDefault();
-        const last = lastVisible(this.visibleNodes);
-        if (last) this.moveFocusTo(last);
+        if (this.visibleNodes.length) this.moveFocusTo(this.visibleNodes[this.visibleNodes.length - 1]);
+        break;
+      }
+      case 'F10': {
+        if (!event.shiftKey) return;
+        event.preventDefault();
+        this.openContextMenuForNode(d);
+        break;
+      }
+      case 'ContextMenu': {
+        event.preventDefault();
+        this.openContextMenuForNode(d);
+        break;
+      }
+    }
+  }
+
+  /** New graph-mode scheme: Up/Down cycle an outgoing-edge cursor (no focus move); Right commits to it; Left retraces via arrivedVia. */
+  private onNodeKeydownGraph(event: KeyboardEvent, d: D3GraphNode): void {
+    switch (event.key) {
+      case 'ArrowDown': {
+        event.preventDefault();
+        const { index } = cycleOutgoingEdge(d, this.allEdges, this.outgoingCursor.get(d.id) ?? 0, 1);
+        this.outgoingCursor.set(d.id, index);
+        break;
+      }
+      case 'ArrowUp': {
+        event.preventDefault();
+        const { index } = cycleOutgoingEdge(d, this.allEdges, this.outgoingCursor.get(d.id) ?? 0, -1);
+        this.outgoingCursor.set(d.id, index);
+        break;
+      }
+      case 'ArrowRight': {
+        event.preventDefault();
+        const { edge } = cycleOutgoingEdge(d, this.allEdges, (this.outgoingCursor.get(d.id) ?? 0) - 1, 1);
+        if (edge) {
+          this.arrivedVia.set(edge.target.id, d.id);
+          this.moveFocusTo(edge.target);
+        }
+        break;
+      }
+      case 'ArrowLeft': {
+        event.preventDefault();
+        const previousId = this.arrivedVia.get(d.id);
+        const previous = previousId ? this.allNodes.find((n) => n.id === previousId) : undefined;
+        if (previous) this.moveFocusTo(previous);
+        break;
+      }
+      case 'Enter':
+      case ' ': {
+        event.preventDefault();
+        if (this.nodeClickFn()?.(d.sourceNode) === true) {
+          this.liveMessage.set(`${d.label} activated`);
+          return;
+        }
+        this.toggleCollapse(d);
+        break;
+      }
+      case 'Home': {
+        event.preventDefault();
+        if (this.entryNode) this.moveFocusTo(this.entryNode);
+        else if (this.visibleNodes.length) this.moveFocusTo(this.visibleNodes[0]);
+        break;
+      }
+      case 'End': {
+        event.preventDefault();
+        if (this.visibleNodes.length) this.moveFocusTo(this.visibleNodes[this.visibleNodes.length - 1]);
         break;
       }
       case 'F10': {
@@ -406,6 +485,8 @@ export class MindmapComponent implements OnInit, OnDestroy {
     this.allEdges = built.edges;
     this.shape = classifyShape(this.allNodes, this.allEdges);
     this.entryNode = resolveEntryNode(this.allNodes, this.allEdges, this.data().entryNodeId);
+    this.outgoingCursor.clear();
+    this.arrivedVia.clear();
     this.focusedNodeId = this.entryNode?.id ?? null;
     this.redraw();
   }

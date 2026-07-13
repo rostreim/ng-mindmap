@@ -158,4 +158,71 @@ describe('MindmapComponent', () => {
       });
     });
   });
+
+  describe('onNodeKeydown', () => {
+    beforeEach(() => {
+      vi.spyOn(component as any, 'redraw').mockImplementation(() => {});
+    });
+
+    describe('tree-shaped data', () => {
+      it('ArrowDown/Up move focus through the DFS-visible order', () => {
+        (component as any).render();
+        (component as any).moveFocusTo((component as any).allNodes.find((n: D3GraphNode) => n.id === 'root'));
+
+        (component as any).onNodeKeydown({ key: 'ArrowDown', preventDefault: () => {} } as KeyboardEvent, (component as any).allNodes.find((n: D3GraphNode) => n.id === 'root'));
+        expect((component as any).focusedNodeId).toBe('a');
+      });
+
+      it('ArrowLeft moves to the parent', () => {
+        (component as any).render();
+        const a1 = (component as any).allNodes.find((n: D3GraphNode) => n.id === 'a1');
+
+        (component as any).onNodeKeydown({ key: 'ArrowLeft', preventDefault: () => {} } as KeyboardEvent, a1);
+        expect((component as any).focusedNodeId).toBe('a');
+      });
+    });
+
+    describe('graph-shaped data', () => {
+      const dag: MindmapGraph = {
+        nodes: [{ id: 'x', label: 'X' }, { id: 'y1', label: 'Y1' }, { id: 'y2', label: 'Y2' }, { id: 'p2', label: 'P2' }],
+        edges: [{ source: 'x', target: 'y1' }, { source: 'x', target: 'y2' }, { source: 'p2', target: 'y1' }],
+      };
+
+      it('ArrowDown cycles the outgoing-edge cursor without moving focus', () => {
+        fixture.componentRef.setInput('data', dag);
+        (component as any).render();
+        const x = (component as any).allNodes.find((n: D3GraphNode) => n.id === 'x');
+        (component as any).moveFocusTo(x);
+
+        (component as any).onNodeKeydown({ key: 'ArrowDown', preventDefault: () => {} } as KeyboardEvent, x);
+
+        expect((component as any).focusedNodeId).toBe('x'); // cursor moved, focus didn't
+        expect((component as any).outgoingCursor.get('x')).toBe(1);
+      });
+
+      it('ArrowRight moves focus along the currently-selected outgoing edge', () => {
+        fixture.componentRef.setInput('data', dag);
+        (component as any).render();
+        const x = (component as any).allNodes.find((n: D3GraphNode) => n.id === 'x');
+        (component as any).moveFocusTo(x);
+
+        (component as any).onNodeKeydown({ key: 'ArrowRight', preventDefault: () => {} } as KeyboardEvent, x);
+
+        expect((component as any).focusedNodeId).toBe('y1'); // index 0 (default cursor) -> first outgoing edge
+      });
+
+      it('ArrowLeft retraces to whichever node ArrowRight was pressed from', () => {
+        fixture.componentRef.setInput('data', dag);
+        (component as any).render();
+        const x = (component as any).allNodes.find((n: D3GraphNode) => n.id === 'x');
+        (component as any).moveFocusTo(x);
+        (component as any).onNodeKeydown({ key: 'ArrowRight', preventDefault: () => {} } as KeyboardEvent, x);
+        const y1 = (component as any).allNodes.find((n: D3GraphNode) => n.id === 'y1');
+
+        (component as any).onNodeKeydown({ key: 'ArrowLeft', preventDefault: () => {} } as KeyboardEvent, y1);
+
+        expect((component as any).focusedNodeId).toBe('x');
+      });
+    });
+  });
 });
