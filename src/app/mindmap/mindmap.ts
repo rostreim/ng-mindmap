@@ -10,20 +10,8 @@ import {
   signal,
 } from '@angular/core';
 import * as d3 from 'd3';
-import { MindmapNode, D3Node, D3Link, MenuEntry, ContextMenuFn, NodeClickFn } from './mindmap.model';
-import {
-  buildTree,
-  computeRadialPositions,
-  firstChild,
-  firstVisible,
-  flattenAll,
-  flattenVisible,
-  isDescendantOf,
-  lastVisible,
-  nextVisible,
-  nodeRadius,
-  previousVisible,
-} from './mindmap-layout';
+import { MindmapGraph, D3GraphNode, D3GraphEdge, MenuEntry, ContextMenuFn, NodeClickFn } from './mindmap.model';
+import { buildGraph, classifyShape, computeVisibleGraph, resolveEntryNode } from './mindmap-layout';
 import { ContextMenuCloseReason, ContextMenuComponent } from './context-menu';
 
 export type MindmapTheme = 'dark' | 'light';
@@ -104,7 +92,7 @@ const THEMES: Record<MindmapTheme, ThemeConfig> = {
   },
 })
 export class MindmapComponent implements OnInit, OnDestroy {
-  readonly data = input.required<MindmapNode>();
+  readonly data = input.required<MindmapGraph>();
   readonly width = input(900);
   readonly height = input(650);
   readonly theme = input<MindmapTheme>('dark');
@@ -152,7 +140,10 @@ export class MindmapComponent implements OnInit, OnDestroy {
   private g!: d3.Selection<SVGGElement, unknown, null, undefined>;
   private zoomBehavior!: d3.ZoomBehavior<SVGSVGElement, unknown>;
   private simulation!: d3.Simulation<D3Node, D3Link>;
-  private rootNode!: D3Node;
+  private allNodes: D3GraphNode[] = [];
+  private allEdges: D3GraphEdge[] = [];
+  private shape: 'tree' | 'graph' = 'tree';
+  private entryNode: D3GraphNode | null = null;
 
   private get tc(): ThemeConfig {
     return THEMES[this.theme()];
@@ -408,33 +399,37 @@ export class MindmapComponent implements OnInit, OnDestroy {
   // ── Render / re-render ─────────────────────────────────────────────────────
 
   private render(): void {
-    // On a data update (not the first render), carry forward each still-present node's
-    // settled x/y instead of re-scattering the whole graph to fresh random spawn points.
-    const previousById = new Map<string, D3Node>();
-    if (this.rootNode) flattenAll(this.rootNode, previousById);
-
-    this.rootNode = buildTree(this.data(), null, 0, undefined, previousById);
-    this.focusedNodeId = this.rootNode.id;
+    const previousById = new Map(this.allNodes.map((n) => [n.id, n]));
+    const built = buildGraph(this.data(), previousById);
+    this.allNodes = built.nodes;
+    this.allEdges = built.edges;
+    this.shape = classifyShape(this.allNodes, this.allEdges);
+    this.entryNode = resolveEntryNode(this.allNodes, this.allEdges, this.data().entryNodeId);
+    this.focusedNodeId = this.entryNode?.id ?? null;
     this.redraw();
   }
 
   private redraw(): void {
     this.buildColorScale();
-    const nodes: D3Node[] = [];
-    const links: D3Link[] = [];
-    flattenVisible(this.rootNode, nodes, links);
-    this.visibleNodes = nodes;
+    const { visibleNodes, visibleEdges } = computeVisibleGraph(this.allNodes, this.allEdges, 'global');
+    this.visibleNodes = visibleNodes;
 
-    if (this.layoutMode() === 'force') {
-      this.syncForceSimulation(nodes, links);
+    let effectiveLayoutMode = this.layoutMode();
+    if (effectiveLayoutMode !== 'force' && this.shape === 'graph') {
+      console.warn(`mindmap: layoutMode "${effectiveLayoutMode}" requires tree-shaped data but the current data is graph-shaped — falling back to "force"`);
+      effectiveLayoutMode = 'force';
+    }
+
+    if (effectiveLayoutMode === 'force') {
+      this.syncForceSimulation(visibleNodes, visibleEdges);
       return;
     }
 
-    computeRadialPositions(this.rootNode);
-    if (this.layoutMode() === 'hybrid') {
-      this.syncHybridSimulation(nodes, links);
+    computeRadialPositions(this.entryNode!, visibleNodes); // TODO(Task 12): update computeRadialPositions() call signature
+    if (effectiveLayoutMode === 'hybrid') {
+      this.syncHybridSimulation(visibleNodes, visibleEdges);
     } else {
-      this.syncRadialLayout(nodes, links);
+      this.syncRadialLayout(visibleNodes, visibleEdges);
     }
   }
 
