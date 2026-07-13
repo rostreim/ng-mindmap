@@ -24,22 +24,23 @@ The app is a single Angular 21 standalone component with no routing and no servi
 ### Data flow
 
 ```
-MindmapNode (input tree)
-  └─ buildTree()  → D3Node tree (parent/children refs, collapse state)
-       └─ flattenVisible()  → flat nodes[] + links[] arrays
-            └─ D3 force simulation  → SVG tick loop
+MindmapGraph (input: flat nodes[] + edges[])
+  └─ buildGraph()  → D3GraphNode[] / D3GraphEdge[] (id refs resolved to live object refs)
+       └─ classifyShape()  → 'tree' | 'graph' (auto-detected, not an input)
+            └─ computeVisibleGraph()  → visible nodes[] + edges[] (collapse-aware)
+                 └─ D3 force simulation (or computeRadialPositions(), tree-only) → SVG tick loop
 ```
 
-`MindmapNode` (`mindmap.model.ts`) is the public API — a plain recursive `{ id, label, children? }` tree. It is converted once into a `D3Node` tree that carries simulation state (`x`, `y`, `fx`, `fy`, `collapsed`, `_children`). `D3Link` holds `source`/`target` as live `D3Node` references (not id strings), which is required for D3's force-link.
+`MindmapGraph` (`mindmap.model.ts`) is the public API — a flat `{ nodes: MindmapGraphNode[], edges: MindmapGraphEdge[], entryNodeId? }` structure; edges reference nodes by string id (`source`/`target`), not by nesting. `buildGraph()` resolves those ids into live `D3GraphNode` object refs once (required for D3's force-link) and validates structurally as it goes — duplicate node ids, self-loops, and edges pointing at unknown ids all throw immediately rather than surfacing as a downstream D3 or `classifyShape()` error. `classifyShape()` then inspects the built graph and auto-detects whether it's `'tree'`-shaped (single root, no node with more than one incoming edge, no cycle) or `'graph'`-shaped — there's no explicit mode input; a consumer just hands over nodes/edges and the component figures out which behavior applies. `resolveEntryNode()` picks the initial focus/camera node: the explicit `entryNodeId` if it resolves, else the best zero-indegree node, else (fully cyclic data) the most-connected node overall.
 
 ### Component internals (`mindmap.ts`)
 
 - **`initSvg()`** — called once in `ngOnInit`; sets up the SVG, dark background rect, zoom/pan behavior, and the root `<g class="graph">` container.
-- **`render()`** — called on first init and on `data` input changes; rebuilds the full `D3Node` tree via `buildTree()`, reusing each still-present node's settled `x`/`y` from the previous tree (matched by id, via `flattenAll()`) instead of re-scattering the whole graph to fresh random spawn points.
-- **`redraw()`** — called after every collapse/expand, theme change, or `layoutMode` change; re-flattens visible nodes and dispatches to one of three sync methods based on `layoutMode`.
+- **`render()`** — called on first init and on `data` input changes; rebuilds `allNodes`/`allEdges` via `buildGraph()` (reusing each still-present node's settled `x`/`y` from the previous build, matched by id, instead of re-scattering the whole graph to fresh random spawn points), re-derives `shape` via `classifyShape()`, re-resolves the entry node via `resolveEntryNode()`, and — tree-shaped data only — computes per-node `depth` with a DFS from the entry node; `depth` stays `undefined` for graph-shaped data.
+- **`redraw()`** — called after every collapse/expand, theme change, or `layoutMode` change; recomputes visible nodes/edges via `computeVisibleGraph()` and dispatches to one of three sync methods based on the *effective* layout mode (see Layout modes below for the graph-shaped gating). Note: `collapseMode` is read by `redraw()` whenever it runs, but has no dedicated reactive trigger of its own — a consumer changing it won't visibly take effect until the next redraw for some other reason.
 - **`syncForceSimulation()` / `syncHybridSimulation()` / `syncRadialLayout()`** — patch the DOM and (where applicable) the D3 force simulation via `join()` rather than tearing down and re-appending everything, so unaffected nodes keep their element identity across a redraw. See Performance contract below for why none of this needs any explicit zone handling.
-- **`computeRadialPositions()`** — pure `d3-hierarchy`/`d3-tree` math (no DOM), used by `'radial'` and `'hybrid'` layout modes to compute deterministic target positions.
-- **`toggleCollapse()`** — swaps `children ↔ _children` on the clicked node, then calls `redraw()`. Also pushes a message onto `liveMessage`, an `aria-live="polite"` signal bound in `mindmap.html` that announces the new state to screen readers. The click/keydown handlers push their own `liveMessage` when `nodeClickFn()` intercepts instead (node "activated" rather than collapsed/expanded).
+- **`computeRadialPositions()`** — pure `d3-hierarchy`/`d3-tree` math (no DOM), used by `'radial'` and `'hybrid'` layout modes to compute deterministic target positions; builds its hierarchy from `visibleEdges` (an adjacency function) rather than a nested `.children` property, since `D3GraphNode` is flat.
+- **`toggleCollapse()`** — flips `collapsed` on the clicked `D3GraphNode`, then calls `redraw()`, which re-derives visibility via `computeVisibleGraph()`. Also pushes a message onto `liveMessage`, an `aria-live="polite"` signal bound in `mindmap.html` that announces the new state to screen readers. The click/keydown handlers push their own `liveMessage` when `nodeClickFn()` intercepts instead (node "activated" rather than collapsed/expanded).
 
 ### Layout modes
 
@@ -48,6 +49,25 @@ MindmapNode (input tree)
 - **`force`** — today's original behavior: a continuously-running D3 force simulation (link/charge/center/collision), Obsidian-graph-view style.
 - **`radial`** — fully deterministic radial tree layout, no simulation.
 - **`hybrid`** — deterministic radial base positions with a brief, weak collision-only settle animation.
+
+`radial`/`hybrid` are tree-only — both need a single root to hang `computeRadialPositions()`'s d3-hierarchy off of. If `classifyShape()` reports `'graph'`, `redraw()` silently falls back to `'force'` for that render and logs a console warning rather than throwing.
+
+### Collapse propagation (`collapseMode` input)
+
+`collapseMode: 'global' | 'per-edge'` (default `'global'`) only matters for graph-shaped data with a shared (multi-parent) node — trees have no shared nodes, so both modes behave identically there. `computeVisibleGraph()` implements this as two phases: a forward walk from every root/seed that never descends past a collapsed node (this alone already gives `'per-edge'` semantics — a shared node stays visible via any non-collapsed parent), followed by a `'global'`-only pruning pass that unconditionally hides everything downstream of a collapsed node even if another path also reaches it.
+
+### Keyboard nav and ARIA — tree vs. graph
+
+`onNodeKeydown()` branches on `shape` (set by `classifyShape()` in `render()`) into `onNodeKeydownTree()` or `onNodeKeydownGraph()`, and `applyNodeAria()` follows the same split:
+
+- **Tree-shaped:** `role="tree"` on the SVG, `role="treeitem"` per node (`aria-level`/`aria-setsize`/`aria-posinset`). ArrowUp/Down move focus through `visibleNodes` (DFS order); ArrowRight/Left expand/collapse or move to child/parent.
+- **Graph-shaped:** `role="application"` on the SVG, `role="button"` per node (no tree-position ARIA — a DAG node's "position" isn't well-defined). ArrowUp/Down cycle a per-node outgoing-edge cursor (`cycleOutgoingEdge()`) without moving focus; ArrowRight commits to the cursored edge and records it in `arrivedVia` so ArrowLeft can retrace it, since there's no DFS order to walk back through instead.
+
+Both branches share Enter/Space (activate via `nodeClickFn()`, or toggle-collapse), Home/End, and the context-menu keys (`Shift+F10`, `ContextMenu`).
+
+### Edge direction (`edgeDirection` input)
+
+`edgeDirection: 'arrow' | 'plain' | undefined` (default `undefined`, meaning "pick by shape": `'arrow'` for graph-shaped data, `'plain'` for tree-shaped). Arrow mode adds an SVG marker and shortens each line's endpoint back along the source→target vector by the target node's radius, so the arrowhead lands on the node's boundary instead of inside it.
 
 ### Performance contract
 

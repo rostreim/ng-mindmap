@@ -141,3 +141,71 @@ test('dragging a node in radial mode moves it and it stays put (no snap-back)', 
   expect(Math.abs(afterWait.x - afterDrag.x)).toBeLessThan(20);
   expect(Math.abs(afterWait.y - afterDrag.y)).toBeLessThan(20);
 });
+
+test.describe('graph-shaped data (DAG demo)', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+    await page.locator('button', { hasText: 'tree' }).click(); // switches dataMode to 'dag'
+    await expect(page.locator('button', { hasText: 'dag' })).toBeVisible();
+  });
+
+  test('radial/hybrid layout options are unavailable for graph-shaped data', async ({ page }) => {
+    const layoutButton = page.locator('button', { hasText: /^⟐/ });
+    await layoutButton.click({ force: true });
+    // Cycling layoutMode on graph-shaped data must stay on 'force' — it should never show
+    // 'radial' or 'hybrid' in the button label at all while dataMode is 'dag'.
+    await expect(page.locator('button', { hasText: 'radial' })).toHaveCount(0);
+    await expect(page.locator('button', { hasText: 'hybrid' })).toHaveCount(0);
+  });
+
+  test('edges render with arrowheads by default', async ({ page }) => {
+    const line = page.locator('.links line').first();
+    await expect(line).toHaveAttribute('marker-end', 'url(#mm-arrow)');
+  });
+
+  test('the SVG uses role="application" and nodes use role="button" for graph-shaped data', async ({ page }) => {
+    await expect(page.locator('svg.mindmap-svg')).toHaveAttribute('role', 'application');
+    await expect(page.locator('g.node').first()).toHaveAttribute('role', 'button');
+  });
+
+  test('collapseMode global vs per-edge changes visibility of the shared d3 node', async ({ page }) => {
+    // 'd3' is shared between 'frontend' and 'backend' in the DAG fixture (Task 13).
+    await expect(page.locator('button', { hasText: 'global' })).toBeVisible();
+
+    await page.locator('g.node', { hasText: /^Frontend$/ }).click({ force: true });
+    await expect(page.locator('g.node', { hasText: /^D3\.js$/ })).toHaveCount(0);
+
+    await page.locator('g.node', { hasText: /^Frontend$/ }).click({ force: true }); // expand back
+    await page.locator('button', { hasText: 'global' }).click(); // switch to per-edge
+
+    await page.locator('g.node', { hasText: /^Frontend$/ }).click({ force: true });
+    // Still visible via 'backend', even with 'frontend' collapsed, in per-edge mode.
+    await expect(page.locator('g.node', { hasText: /^D3\.js$/ })).toBeVisible();
+  });
+
+  test('graph-mode keyboard traversal: ArrowDown cursors an edge, ArrowRight commits, ArrowLeft retraces', async ({ page }) => {
+    // 'Frontend' has three outgoing edges (→angular, →react, →d3), so it can drive the
+    // outgoing-edge cursor. Everything here is real KeyboardEvents on focused DOM elements,
+    // covering the interaction end-to-end (unit tests call the private handlers directly).
+    const frontend = page.locator('g.node', { hasText: /^Frontend$/ });
+    await frontend.focus();
+    await expect(frontend).toBeFocused();
+
+    // ArrowDown moves the outgoing-edge cursor and highlights exactly one edge
+    // (highlightOutgoingCursor() sets stroke-opacity=1 on the cursored line, 0.15 on the
+    // rest) — but must NOT move focus (that's ArrowRight's job).
+    await page.keyboard.press('ArrowDown');
+    await expect(page.locator('.links line[stroke-opacity="1"]')).toHaveCount(1);
+    await expect(frontend).toBeFocused();
+
+    // ArrowRight commits to the cursored edge, moving focus to its target node.
+    await page.keyboard.press('ArrowRight');
+    await expect(frontend).not.toBeFocused();
+    const committed = page.locator('g.node:focus');
+    await expect(committed).toHaveCount(1);
+
+    // ArrowLeft retraces via arrivedVia back to the node we came from ('Frontend').
+    await page.keyboard.press('ArrowLeft');
+    await expect(frontend).toBeFocused();
+  });
+});

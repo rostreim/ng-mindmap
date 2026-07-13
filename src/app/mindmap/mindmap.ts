@@ -10,20 +10,8 @@ import {
   signal,
 } from '@angular/core';
 import * as d3 from 'd3';
-import { MindmapNode, D3Node, D3Link, MenuEntry, ContextMenuFn, NodeClickFn } from './mindmap.model';
-import {
-  buildTree,
-  computeRadialPositions,
-  firstChild,
-  firstVisible,
-  flattenAll,
-  flattenVisible,
-  isDescendantOf,
-  lastVisible,
-  nextVisible,
-  nodeRadius,
-  previousVisible,
-} from './mindmap-layout';
+import { MindmapGraph, D3GraphNode, D3GraphEdge, MenuEntry, ContextMenuFn, NodeClickFn } from './mindmap.model';
+import { buildGraph, classifyShape, computeRadialPositions, computeVisibleGraph, cycleOutgoingEdge, nodeRadius, resolveEntryNode } from './mindmap-layout';
 import { ContextMenuCloseReason, ContextMenuComponent } from './context-menu';
 
 export type MindmapTheme = 'dark' | 'light';
@@ -104,7 +92,7 @@ const THEMES: Record<MindmapTheme, ThemeConfig> = {
   },
 })
 export class MindmapComponent implements OnInit, OnDestroy {
-  readonly data = input.required<MindmapNode>();
+  readonly data = input.required<MindmapGraph>();
   readonly width = input(900);
   readonly height = input(650);
   readonly theme = input<MindmapTheme>('dark');
@@ -112,6 +100,8 @@ export class MindmapComponent implements OnInit, OnDestroy {
   readonly nodeClickFn = input<NodeClickFn>();
   readonly ariaLabel = input('Mind map');
   readonly layoutMode = input<MindmapLayout>('force');
+  readonly collapseMode = input<'global' | 'per-edge'>('global');
+  readonly edgeDirection = input<'arrow' | 'plain' | undefined>(undefined);
 
   @ViewChild('svgContainer', { static: true }) svgRef!: ElementRef<SVGSVGElement>;
 
@@ -151,8 +141,13 @@ export class MindmapComponent implements OnInit, OnDestroy {
   private svg!: d3.Selection<SVGSVGElement, unknown, null, undefined>;
   private g!: d3.Selection<SVGGElement, unknown, null, undefined>;
   private zoomBehavior!: d3.ZoomBehavior<SVGSVGElement, unknown>;
-  private simulation!: d3.Simulation<D3Node, D3Link>;
-  private rootNode!: D3Node;
+  private simulation!: d3.Simulation<D3GraphNode, D3GraphEdge>;
+  private allNodes: D3GraphNode[] = [];
+  private allEdges: D3GraphEdge[] = [];
+  private shape: 'tree' | 'graph' = 'tree';
+  private entryNode: D3GraphNode | null = null;
+  /** The tree's actual structural root (zero-indegree node) — drives radial layout + depth origin, decoupled from entryNode (focus/camera). Null for graph-shaped or empty data. */
+  private structuralRoot: D3GraphNode | null = null;
 
   private get tc(): ThemeConfig {
     return THEMES[this.theme()];
@@ -160,11 +155,15 @@ export class MindmapComponent implements OnInit, OnDestroy {
 
   private colorScale!: d3.ScaleOrdinal<number, string>;
   private strokeColorByDepth: string[] = [];
-  private visibleNodes: D3Node[] = [];
+  private visibleNodes: D3GraphNode[] = [];
   private focusedNodeId: string | null = null;
+  /** Graph-mode only: "currently selected outgoing edge" cursor per node, for ArrowUp/Down. Reset on data change. */
+  private outgoingCursor = new Map<string, number>();
+  /** Graph-mode only: which node ArrowRight was pressed from to reach this node, for ArrowLeft. Reset on data change. */
+  private arrivedVia = new Map<string, string>();
 
   /** Rebuilt once per updateEdges() call so node hover only touches its own incident links, not every link in the graph. */
-  private linksByNode = new Map<string, D3Link[]>();
+  private linksByNode = new Map<string, D3GraphEdge[]>();
 
   constructor() {
     // Each effect's first run happens once ngOnInit's own initSvg()/render() have already
@@ -183,14 +182,14 @@ export class MindmapComponent implements OnInit, OnDestroy {
       this.theme();
       if (themeFirstRun) { themeFirstRun = false; return; }
       this.applyThemeToBackground();
-      if (this.rootNode) this.redraw();
+      if (this.allNodes.length) this.redraw();
     });
 
     let layoutModeFirstRun = true;
     effect(() => {
       this.layoutMode();
       if (layoutModeFirstRun) { layoutModeFirstRun = false; return; }
-      if (this.rootNode) {
+      if (this.allNodes.length) {
         this.redraw();
         this.zoomToFitAfterSettle();
       }
@@ -219,7 +218,6 @@ export class MindmapComponent implements OnInit, OnDestroy {
     this.svg = d3.select(this.svgRef.nativeElement)
       .attr('width', this.width())
       .attr('height', this.height())
-      .attr('role', 'tree')
       .attr('aria-label', this.ariaLabel());
 
     this.svg.append('rect')
@@ -320,52 +318,63 @@ export class MindmapComponent implements OnInit, OnDestroy {
       (d3.color(color) as d3.RGBColor).brighter(brighterBy).formatHex());
   }
 
-  private strokeColorFor(d: D3Node): string {
-    return this.strokeColorByDepth[d.depth % this.strokeColorByDepth.length];
+  private strokeColorFor(d: D3GraphNode): string {
+    return this.strokeColorByDepth[(d.depth ?? 0) % this.strokeColorByDepth.length];
   }
 
 
-  private applyTabindex(selection: d3.Selection<SVGGElement, D3Node, SVGGElement, unknown>): void {
+  private applyTabindex(selection: d3.Selection<SVGGElement, D3GraphNode, SVGGElement, unknown>): void {
     selection.attr('tabindex', (d) => (d.id === this.focusedNodeId ? 0 : -1));
   }
 
-  private moveFocusTo(d: D3Node): void {
+  private moveFocusTo(d: D3GraphNode): void {
     this.focusedNodeId = d.id;
-    const nodeSelection = this.g.select<SVGGElement>('.nodes').selectAll<SVGGElement, D3Node>('g.node');
+    const nodeSelection = this.g.select<SVGGElement>('.nodes').selectAll<SVGGElement, D3GraphNode>('g.node');
     this.applyTabindex(nodeSelection);
     nodeSelection.filter((n) => n.id === d.id).node()?.focus();
   }
 
-  private onNodeKeydown(event: KeyboardEvent, d: D3Node): void {
+  private onNodeKeydown(event: KeyboardEvent, d: D3GraphNode): void {
+    if (this.shape === 'tree') {
+      this.onNodeKeydownTree(event, d);
+    } else {
+      this.onNodeKeydownGraph(event, d);
+    }
+  }
+
+  /** Ported unchanged from the old tree-only implementation — visibleNodes is already in DFS order for tree-shaped data, since computeVisibleGraph()'s walk is a DFS from the single root. */
+  private onNodeKeydownTree(event: KeyboardEvent, d: D3GraphNode): void {
     switch (event.key) {
       case 'ArrowDown': {
         event.preventDefault();
-        const next = nextVisible(this.visibleNodes, d.id);
-        if (next) this.moveFocusTo(next);
+        const i = this.visibleNodes.findIndex((n) => n.id === d.id);
+        if (i !== -1 && i < this.visibleNodes.length - 1) this.moveFocusTo(this.visibleNodes[i + 1]);
         break;
       }
       case 'ArrowUp': {
         event.preventDefault();
-        const prev = previousVisible(this.visibleNodes, d.id);
-        if (prev) this.moveFocusTo(prev);
+        const i = this.visibleNodes.findIndex((n) => n.id === d.id);
+        if (i > 0) this.moveFocusTo(this.visibleNodes[i - 1]);
         break;
       }
       case 'ArrowRight': {
         event.preventDefault();
-        if (d._children && d._children.length) {
+        if (d.collapsed) {
           this.toggleCollapse(d);
         } else {
-          const child = firstChild(d);
+          const child = this.allEdges.find((e) => e.source.id === d.id)?.target;
           if (child) this.moveFocusTo(child);
         }
         break;
       }
       case 'ArrowLeft': {
         event.preventDefault();
-        if (d.children && d.children.length) {
+        const hasOutgoing = this.allEdges.some((e) => e.source.id === d.id);
+        const parentEdge = this.allEdges.find((e) => e.target.id === d.id);
+        if (hasOutgoing && !d.collapsed) {
           this.toggleCollapse(d);
-        } else if (d.parent) {
-          this.moveFocusTo(d.parent);
+        } else if (parentEdge) {
+          this.moveFocusTo(parentEdge.source);
         }
         break;
       }
@@ -381,14 +390,12 @@ export class MindmapComponent implements OnInit, OnDestroy {
       }
       case 'Home': {
         event.preventDefault();
-        const first = firstVisible(this.visibleNodes);
-        if (first) this.moveFocusTo(first);
+        if (this.visibleNodes.length) this.moveFocusTo(this.visibleNodes[0]);
         break;
       }
       case 'End': {
         event.preventDefault();
-        const last = lastVisible(this.visibleNodes);
-        if (last) this.moveFocusTo(last);
+        if (this.visibleNodes.length) this.moveFocusTo(this.visibleNodes[this.visibleNodes.length - 1]);
         break;
       }
       case 'F10': {
@@ -405,36 +412,152 @@ export class MindmapComponent implements OnInit, OnDestroy {
     }
   }
 
+  /** New graph-mode scheme: Up/Down cycle an outgoing-edge cursor (no focus move); Right commits to it; Left retraces via arrivedVia. */
+  private onNodeKeydownGraph(event: KeyboardEvent, d: D3GraphNode): void {
+    switch (event.key) {
+      case 'ArrowDown': {
+        event.preventDefault();
+        const { index } = cycleOutgoingEdge(d, this.allEdges, this.outgoingCursor.get(d.id) ?? 0, 1);
+        this.outgoingCursor.set(d.id, index);
+        this.highlightOutgoingCursor(d);
+        break;
+      }
+      case 'ArrowUp': {
+        event.preventDefault();
+        const { index } = cycleOutgoingEdge(d, this.allEdges, this.outgoingCursor.get(d.id) ?? 0, -1);
+        this.outgoingCursor.set(d.id, index);
+        this.highlightOutgoingCursor(d);
+        break;
+      }
+      case 'ArrowRight': {
+        event.preventDefault();
+        const { edge } = cycleOutgoingEdge(d, this.allEdges, (this.outgoingCursor.get(d.id) ?? 0) - 1, 1);
+        if (edge) {
+          this.arrivedVia.set(edge.target.id, d.id);
+          this.moveFocusTo(edge.target);
+        }
+        break;
+      }
+      case 'ArrowLeft': {
+        event.preventDefault();
+        const previousId = this.arrivedVia.get(d.id);
+        const previous = previousId ? this.allNodes.find((n) => n.id === previousId) : undefined;
+        if (previous) this.moveFocusTo(previous);
+        break;
+      }
+      case 'Enter':
+      case ' ': {
+        event.preventDefault();
+        if (this.nodeClickFn()?.(d.sourceNode) === true) {
+          this.liveMessage.set(`${d.label} activated`);
+          return;
+        }
+        this.toggleCollapse(d);
+        break;
+      }
+      case 'Home': {
+        event.preventDefault();
+        if (this.entryNode) this.moveFocusTo(this.entryNode);
+        else if (this.visibleNodes.length) this.moveFocusTo(this.visibleNodes[0]);
+        break;
+      }
+      case 'End': {
+        event.preventDefault();
+        if (this.visibleNodes.length) this.moveFocusTo(this.visibleNodes[this.visibleNodes.length - 1]);
+        break;
+      }
+      case 'F10': {
+        if (!event.shiftKey) return;
+        event.preventDefault();
+        this.openContextMenuForNode(d);
+        break;
+      }
+      case 'ContextMenu': {
+        event.preventDefault();
+        this.openContextMenuForNode(d);
+        break;
+      }
+    }
+  }
+
+  /** Visual affordance for the graph-mode outgoing-edge keyboard cursor — reuses the hover incident-edge styling. */
+  private highlightOutgoingCursor(node: D3GraphNode): void {
+    const { edge } = cycleOutgoingEdge(node, this.allEdges, (this.outgoingCursor.get(node.id) ?? 0) - 1, 1);
+    this.g.select('.links').selectAll<SVGLineElement, D3GraphEdge>('line')
+      .transition().duration(HOVER_TRANSITION_MS)
+      .attr('stroke-opacity', (link) => (link.id === edge?.id ? 1 : 0.15))
+      .attr('stroke-width', (link) => (link.id === edge?.id ? 2 : 1.5))
+      .attr('stroke', (link) => (link.id === edge?.id ? this.colorScale(0) : this.tc.edgeStroke));
+  }
+
   // ── Render / re-render ─────────────────────────────────────────────────────
 
-  private render(): void {
-    // On a data update (not the first render), carry forward each still-present node's
-    // settled x/y instead of re-scattering the whole graph to fresh random spawn points.
-    const previousById = new Map<string, D3Node>();
-    if (this.rootNode) flattenAll(this.rootNode, previousById);
+  private effectiveEdgeDirection(): 'arrow' | 'plain' {
+    return this.edgeDirection() ?? (this.shape === 'graph' ? 'arrow' : 'plain');
+  }
 
-    this.rootNode = buildTree(this.data(), null, 0, undefined, previousById);
-    this.focusedNodeId = this.rootNode.id;
+  private render(): void {
+    const previousById = new Map(this.allNodes.map((n) => [n.id, n]));
+    const built = buildGraph(this.data(), previousById);
+    this.allNodes = built.nodes;
+    this.allEdges = built.edges;
+    this.shape = classifyShape(this.allNodes, this.allEdges);
+    if (this.shape === 'tree') {
+      const hasIncoming = new Set(this.allEdges.map((e) => e.target.id));
+      this.structuralRoot = this.allNodes.find((n) => !hasIncoming.has(n.id)) ?? null;
+    } else {
+      this.structuralRoot = null;
+    }
+    this.entryNode = resolveEntryNode(this.allNodes, this.allEdges, this.data().entryNodeId);
+    this.outgoingCursor.clear();
+    this.arrivedVia.clear();
+    this.focusedNodeId = this.entryNode?.id ?? null;
+
+    if (this.shape === 'tree' && this.structuralRoot) {
+      const depthById = new Map<string, number>([[this.structuralRoot.id, 0]]);
+      const stack = [this.structuralRoot];
+      while (stack.length) {
+        const n = stack.pop()!;
+        for (const e of this.allEdges.filter((edge) => edge.source.id === n.id)) {
+          depthById.set(e.target.id, (depthById.get(n.id) ?? 0) + 1);
+          stack.push(e.target);
+        }
+      }
+      for (const n of this.allNodes) n.depth = depthById.get(n.id);
+    } else {
+      for (const n of this.allNodes) n.depth = undefined;
+    }
+
     this.redraw();
   }
 
   private redraw(): void {
     this.buildColorScale();
-    const nodes: D3Node[] = [];
-    const links: D3Link[] = [];
-    flattenVisible(this.rootNode, nodes, links);
-    this.visibleNodes = nodes;
+    this.svg.attr('role', this.shape === 'tree' ? 'tree' : 'application');
+    const { visibleNodes, visibleEdges } = computeVisibleGraph(this.allNodes, this.allEdges, this.collapseMode());
+    this.visibleNodes = visibleNodes;
 
-    if (this.layoutMode() === 'force') {
-      this.syncForceSimulation(nodes, links);
+    let effectiveLayoutMode = this.layoutMode();
+    if (effectiveLayoutMode !== 'force' && this.shape === 'graph') {
+      console.warn(`mindmap: layoutMode "${effectiveLayoutMode}" requires tree-shaped data but the current data is graph-shaped — falling back to "force"`);
+      effectiveLayoutMode = 'force';
+    } else if (effectiveLayoutMode !== 'force' && this.structuralRoot === null) {
+      // Empty graph (or no discoverable structural root) — nothing for computeRadialPositions()
+      // to walk, so fall back to the force path, which safely no-ops on empty arrays and still
+      // clears any stale DOM via updateEdges([])/updateNodes([]).
+      effectiveLayoutMode = 'force';
+    }
+
+    if (effectiveLayoutMode === 'force') {
+      this.syncForceSimulation(visibleNodes, visibleEdges);
       return;
     }
 
-    computeRadialPositions(this.rootNode);
-    if (this.layoutMode() === 'hybrid') {
-      this.syncHybridSimulation(nodes, links);
+    computeRadialPositions(this.structuralRoot!, visibleNodes, visibleEdges);
+    if (effectiveLayoutMode === 'hybrid') {
+      this.syncHybridSimulation(visibleNodes, visibleEdges);
     } else {
-      this.syncRadialLayout(nodes, links);
+      this.syncRadialLayout(visibleNodes, visibleEdges);
     }
   }
 
@@ -444,28 +567,28 @@ export class MindmapComponent implements OnInit, OnDestroy {
    * identity (and any in-flight CSS transition) across a collapse/expand or data swap.
    * The simulation is reheated in place rather than recreated, preserving velocity.
    */
-  private syncForceSimulation(nodes: D3Node[], links: D3Link[]): void {
+  private syncForceSimulation(nodes: D3GraphNode[], links: D3GraphEdge[]): void {
     this.buildGlowFilter();
 
     if (this.simulation) {
       this.simulation.nodes(nodes);
-      this.simulation.force('link', d3.forceLink<D3Node, D3Link>(links)
+      this.simulation.force('link', d3.forceLink<D3GraphNode, D3GraphEdge>(links)
         .id((d) => d.id)
-        .distance((d) => LINK_DISTANCE_BASE + d.target.depth * LINK_DISTANCE_PER_DEPTH));
+        .distance((d) => LINK_DISTANCE_BASE + (d.target.depth ?? 0) * LINK_DISTANCE_PER_DEPTH));
       this.simulation.force('charge', d3.forceManyBody().strength(CHARGE_STRENGTH));
       this.simulation.force('center', d3.forceCenter(0, 0));
-      this.simulation.force('collision', d3.forceCollide<D3Node>((d) => nodeRadius(d) + COLLISION_PADDING));
+      this.simulation.force('collision', d3.forceCollide<D3GraphNode>((d) => nodeRadius(d) + COLLISION_PADDING));
       this.simulation.force('x', null);
       this.simulation.force('y', null);
       this.simulation.alpha(REDRAW_ALPHA).restart();
     } else {
-      this.simulation = d3.forceSimulation<D3Node>(nodes)
-        .force('link', d3.forceLink<D3Node, D3Link>(links)
+      this.simulation = d3.forceSimulation<D3GraphNode>(nodes)
+        .force('link', d3.forceLink<D3GraphNode, D3GraphEdge>(links)
           .id((d) => d.id)
-          .distance((d) => LINK_DISTANCE_BASE + d.target.depth * LINK_DISTANCE_PER_DEPTH))
+          .distance((d) => LINK_DISTANCE_BASE + (d.target.depth ?? 0) * LINK_DISTANCE_PER_DEPTH))
         .force('charge', d3.forceManyBody().strength(CHARGE_STRENGTH))
         .force('center', d3.forceCenter(0, 0))
-        .force('collision', d3.forceCollide<D3Node>((d) => nodeRadius(d) + COLLISION_PADDING))
+        .force('collision', d3.forceCollide<D3GraphNode>((d) => nodeRadius(d) + COLLISION_PADDING))
         .alphaDecay(ALPHA_DECAY)
         .on('tick', () => this.tick());
     }
@@ -480,7 +603,7 @@ export class MindmapComponent implements OnInit, OnDestroy {
    * soft settle-in that resolves accidental overlaps without any link/charge-driven
    * structure. Reuses the same alpha-reheat-on-redraw mechanism as force mode.
    */
-  private syncHybridSimulation(nodes: D3Node[], links: D3Link[]): void {
+  private syncHybridSimulation(nodes: D3GraphNode[], links: D3GraphEdge[]): void {
     this.buildGlowFilter();
 
     for (const n of nodes) {
@@ -493,15 +616,15 @@ export class MindmapComponent implements OnInit, OnDestroy {
       this.simulation.force('link', null);
       this.simulation.force('charge', null);
       this.simulation.force('center', null);
-      this.simulation.force('x', d3.forceX<D3Node>((d) => d.targetX ?? 0).strength(HYBRID_POSITION_STRENGTH));
-      this.simulation.force('y', d3.forceY<D3Node>((d) => d.targetY ?? 0).strength(HYBRID_POSITION_STRENGTH));
-      this.simulation.force('collision', d3.forceCollide<D3Node>((d) => nodeRadius(d) + COLLISION_PADDING));
+      this.simulation.force('x', d3.forceX<D3GraphNode>((d) => d.targetX ?? 0).strength(HYBRID_POSITION_STRENGTH));
+      this.simulation.force('y', d3.forceY<D3GraphNode>((d) => d.targetY ?? 0).strength(HYBRID_POSITION_STRENGTH));
+      this.simulation.force('collision', d3.forceCollide<D3GraphNode>((d) => nodeRadius(d) + COLLISION_PADDING));
       this.simulation.alpha(HYBRID_ALPHA).restart();
     } else {
-      this.simulation = d3.forceSimulation<D3Node>(nodes)
-        .force('x', d3.forceX<D3Node>((d) => d.targetX ?? 0).strength(HYBRID_POSITION_STRENGTH))
-        .force('y', d3.forceY<D3Node>((d) => d.targetY ?? 0).strength(HYBRID_POSITION_STRENGTH))
-        .force('collision', d3.forceCollide<D3Node>((d) => nodeRadius(d) + COLLISION_PADDING))
+      this.simulation = d3.forceSimulation<D3GraphNode>(nodes)
+        .force('x', d3.forceX<D3GraphNode>((d) => d.targetX ?? 0).strength(HYBRID_POSITION_STRENGTH))
+        .force('y', d3.forceY<D3GraphNode>((d) => d.targetY ?? 0).strength(HYBRID_POSITION_STRENGTH))
+        .force('collision', d3.forceCollide<D3GraphNode>((d) => nodeRadius(d) + COLLISION_PADDING))
         .alphaDecay(ALPHA_DECAY)
         .on('tick', () => this.tick());
     }
@@ -516,7 +639,7 @@ export class MindmapComponent implements OnInit, OnDestroy {
    * (there's no running simulation to smooth a position jump otherwise, e.g. after a
    * collapse/expand that shifts other nodes' angles).
    */
-  private syncRadialLayout(nodes: D3Node[], links: D3Link[]): void {
+  private syncRadialLayout(nodes: D3GraphNode[], links: D3GraphEdge[]): void {
     this.simulation?.stop();
     this.buildGlowFilter();
 
@@ -530,16 +653,16 @@ export class MindmapComponent implements OnInit, OnDestroy {
 
     const duration = this.prefersReducedMotion() ? 0 : RADIAL_TRANSITION_MS;
 
-    this.g.select<SVGGElement>('.nodes').selectAll<SVGGElement, D3Node>('g.node')
+    this.g.select<SVGGElement>('.nodes').selectAll<SVGGElement, D3GraphNode>('g.node')
       .transition().duration(duration)
       .attr('transform', (d) => `translate(${d.x},${d.y})`);
 
-    this.g.select<SVGGElement>('.links').selectAll<SVGLineElement, D3Link>('line')
+    this.g.select<SVGGElement>('.links').selectAll<SVGLineElement, D3GraphEdge>('line')
       .transition().duration(duration)
       .attr('x1', (d) => d.source.x!)
       .attr('y1', (d) => d.source.y!)
-      .attr('x2', (d) => d.target.x!)
-      .attr('y2', (d) => d.target.y!);
+      .attr('x2', (d) => this.shortenedEndpoint(d, this.effectiveEdgeDirection()).x)
+      .attr('y2', (d) => this.shortenedEndpoint(d, this.effectiveEdgeDirection()).y);
   }
 
   // ── Glow SVG filter ────────────────────────────────────────────────────────
@@ -549,44 +672,58 @@ export class MindmapComponent implements OnInit, OnDestroy {
       ? this.svg.insert('defs', ':first-child')
       : this.svg.select<SVGDefsElement>('defs');
 
-    if (!defs.select('#mm-glow').empty()) return;
+    if (defs.select('#mm-glow').empty()) {
+      const f = defs.append('filter').attr('id', 'mm-glow')
+        .attr('x', '-60%').attr('y', '-60%')
+        .attr('width', '220%').attr('height', '220%');
+      f.append('feGaussianBlur')
+        .attr('in', 'SourceGraphic')
+        .attr('stdDeviation', String(this.tc.glowStdDeviation))
+        .attr('result', 'blur');
+      const merge = f.append('feMerge');
+      merge.append('feMergeNode').attr('in', 'blur');
+      merge.append('feMergeNode').attr('in', 'SourceGraphic');
+    }
 
-    const f = defs.append('filter').attr('id', 'mm-glow')
-      .attr('x', '-60%').attr('y', '-60%')
-      .attr('width', '220%').attr('height', '220%');
-    f.append('feGaussianBlur')
-      .attr('in', 'SourceGraphic')
-      .attr('stdDeviation', String(this.tc.glowStdDeviation))
-      .attr('result', 'blur');
-    const merge = f.append('feMerge');
-    merge.append('feMergeNode').attr('in', 'blur');
-    merge.append('feMergeNode').attr('in', 'SourceGraphic');
+    if (defs.select('#mm-arrow').empty()) {
+      defs.append('marker').attr('id', 'mm-arrow')
+        .attr('viewBox', '0 0 10 10')
+        .attr('refX', 9).attr('refY', 5)
+        .attr('markerWidth', 6).attr('markerHeight', 6)
+        .attr('orient', 'auto-start-reverse')
+        .append('path')
+        .attr('d', 'M 0 0 L 10 5 L 0 10 z')
+        .attr('fill', this.tc.edgeStroke);
+    }
   }
 
   // ── Drawing ────────────────────────────────────────────────────────────────
 
-  private updateEdges(links: D3Link[]): void {
+  private updateEdges(edges: D3GraphEdge[]): void {
+    const direction = this.effectiveEdgeDirection();
+
     this.g.select<SVGGElement>('.links')
-      .selectAll<SVGLineElement, D3Link>('line')
-      .data(links, (d) => `${d.source.id}→${d.target.id}`)
+      .selectAll<SVGLineElement, D3GraphEdge>('line')
+      .data(edges, (d) => d.id)
       .join('line')
       .attr('stroke', this.tc.edgeStroke)
       .attr('stroke-width', 1.5)
-      .attr('stroke-opacity', this.tc.edgeOpacity);
+      .attr('stroke-opacity', this.tc.edgeOpacity)
+      .attr('marker-end', direction === 'arrow' ? 'url(#mm-arrow)' : null);
 
     this.linksByNode.clear();
-    for (const link of links) {
-      for (const id of [link.source.id, link.target.id]) {
+    for (const edge of edges) {
+      for (const id of [edge.source.id, edge.target.id]) {
         const incident = this.linksByNode.get(id);
-        if (incident) incident.push(link);
-        else this.linksByNode.set(id, [link]);
+        if (incident) incident.push(edge);
+        else this.linksByNode.set(id, [edge]);
       }
     }
   }
 
-  private updateNodes(nodes: D3Node[]): void {
+  private updateNodes(nodes: D3GraphNode[]): void {
     const merged = this.g.select<SVGGElement>('.nodes')
-      .selectAll<SVGGElement, D3Node>('g.node')
+      .selectAll<SVGGElement, D3GraphNode>('g.node')
       .data(nodes, (d) => d.id)
       .join(
         (enter) => this.enterNodes(enter),
@@ -599,7 +736,7 @@ export class MindmapComponent implements OnInit, OnDestroy {
     this.applyTabindex(merged);
   }
 
-  private openContextMenu(d: D3Node, x: number, y: number): void {
+  private openContextMenu(d: D3GraphNode, x: number, y: number): void {
     const contextMenuFn = this.contextMenuFn();
     if (!contextMenuFn) return;
     contextMenuFn(d.sourceNode)
@@ -613,8 +750,8 @@ export class MindmapComponent implements OnInit, OnDestroy {
       .catch((err) => console.error('mindmap: contextMenuFn rejected, menu not opened', err));
   }
 
-  private openContextMenuForNode(d: D3Node): void {
-    const el = this.g.select<SVGGElement>('.nodes').selectAll<SVGGElement, D3Node>('g.node')
+  private openContextMenuForNode(d: D3GraphNode): void {
+    const el = this.g.select<SVGGElement>('.nodes').selectAll<SVGGElement, D3GraphNode>('g.node')
       .filter((n) => n.id === d.id).node();
     const rect = el?.getBoundingClientRect();
     const x = rect ? rect.left + rect.width / 2 : 0;
@@ -624,8 +761,8 @@ export class MindmapComponent implements OnInit, OnDestroy {
 
   /** Structural setup for newly-entering nodes only: DOM shape + interaction handlers. */
   private enterNodes(
-    enter: d3.Selection<d3.EnterElement, D3Node, SVGGElement, unknown>,
-  ): d3.Selection<SVGGElement, D3Node, SVGGElement, unknown> {
+    enter: d3.Selection<d3.EnterElement, D3GraphNode, SVGGElement, unknown>,
+  ): d3.Selection<SVGGElement, D3GraphNode, SVGGElement, unknown> {
     const nodeGroup = enter.append('g')
       .attr('class', 'node')
       .call(this.dragBehavior())
@@ -636,7 +773,7 @@ export class MindmapComponent implements OnInit, OnDestroy {
         }
         this.toggleCollapse(d);
       })
-      .on('contextmenu', (event: MouseEvent, d: D3Node) => {
+      .on('contextmenu', (event: MouseEvent, d: D3GraphNode) => {
         event.preventDefault();
         event.stopPropagation();
         this.openContextMenu(d, event.clientX, event.clientY);
@@ -646,20 +783,20 @@ export class MindmapComponent implements OnInit, OnDestroy {
         // bound to these DOM elements this redraw, so reference identity via Set.has()
         // works directly — no need to re-derive a string key per link per attr call.
         const incident = new Set(this.linksByNode.get(d.id));
-        this.g.select('.links').selectAll<SVGLineElement, D3Link>('line')
+        this.g.select('.links').selectAll<SVGLineElement, D3GraphEdge>('line')
           .transition().duration(HOVER_TRANSITION_MS)
           .attr('stroke-opacity', (link) => (incident.has(link) ? 1 : 0.15))
           .attr('stroke-width', (link) => (incident.has(link) ? 2 : 1.5))
-          .attr('stroke', (link) => (incident.has(link) ? this.colorScale(d.depth) : this.tc.edgeStroke));
+          .attr('stroke', (link) => (incident.has(link) ? this.colorScale(d.depth ?? 0) : this.tc.edgeStroke));
       })
       .on('mouseout', () => {
-        this.g.select('.links').selectAll<SVGLineElement, D3Link>('line')
+        this.g.select('.links').selectAll<SVGLineElement, D3GraphEdge>('line')
           .transition().duration(HOVER_TRANSITION_MS)
           .attr('stroke-opacity', this.tc.edgeOpacity)
           .attr('stroke-width', 1.5)
           .attr('stroke', this.tc.edgeStroke);
       })
-      .on('keydown', (event: KeyboardEvent, d: D3Node) => this.onNodeKeydown(event, d));
+      .on('keydown', (event: KeyboardEvent, d: D3GraphNode) => this.onNodeKeydown(event, d));
 
     const inner = nodeGroup.append('g').attr('class', 'node-scale');
     inner.append('circle').attr('class', 'halo').attr('filter', 'url(#mm-glow)');
@@ -674,17 +811,17 @@ export class MindmapComponent implements OnInit, OnDestroy {
   }
 
   /** Depth/theme/collapse-state-dependent attrs, reapplied to entered + existing nodes alike. */
-  private applyNodeTheme(selection: d3.Selection<SVGGElement, D3Node, SVGGElement, unknown>): void {
+  private applyNodeTheme(selection: d3.Selection<SVGGElement, D3GraphNode, SVGGElement, unknown>): void {
     selection.select<SVGCircleElement>('circle.halo')
       .attr('r', (d) => nodeRadius(d) + 5)
       .attr('fill', 'none')
-      .attr('stroke', (d) => this.colorScale(d.depth))
+      .attr('stroke', (d) => this.colorScale(d.depth ?? 0))
       .attr('stroke-opacity', this.tc.haloOpacity)
       .attr('stroke-width', 7);
 
     selection.select<SVGCircleElement>('circle.body')
       .attr('r', (d) => nodeRadius(d))
-      .attr('fill', (d) => this.colorScale(d.depth))
+      .attr('fill', (d) => this.colorScale(d.depth ?? 0))
       .attr('fill-opacity', this.theme() === 'light' ? 1 : 0.92)
       .attr('stroke', (d) => this.strokeColorFor(d))
       .attr('stroke-width', 1.5);
@@ -700,74 +837,85 @@ export class MindmapComponent implements OnInit, OnDestroy {
       .attr('cx', (d) => nodeRadius(d))
       .attr('cy', (d) => -nodeRadius(d))
       .attr('fill', this.tc.badgeFill)
-      .attr('opacity', (d) => (d._children && d._children.length ? 1 : 0));
+      .attr('opacity', (d) => (d.collapsed ? 1 : 0));
   }
 
-  /** ARIA treeitem semantics — role/level/expanded/setsize/posinset. Flat DOM (see design doc). */
-  private applyNodeAria(selection: d3.Selection<SVGGElement, D3Node, SVGGElement, unknown>): void {
-    selection
-      .attr('role', 'treeitem')
-      .attr('aria-label', (d) => d.label)
-      .attr('aria-level', (d) => d.depth + 1)
-      .attr('aria-setsize', (d) => (d.parent ? (d.parent.children?.length ?? 1) : 1))
-      .attr('aria-posinset', (d) => (d.parent ? (d.parent.children?.indexOf(d) ?? 0) + 1 : 1))
-      .attr('aria-expanded', (d) => {
-        const hasChildren = !!(d.children?.length || d._children?.length);
-        return hasChildren ? String(!!d.children?.length) : null;
-      });
+  /** ARIA semantics — treeitem (tree-shaped) or button (graph-shaped). Flat DOM (see design doc). */
+  private applyNodeAria(selection: d3.Selection<SVGGElement, D3GraphNode, SVGGElement, unknown>): void {
+    const hasOutgoing = (d: D3GraphNode) => this.allEdges.some((e) => e.source.id === d.id);
+
+    if (this.shape === 'tree') {
+      selection
+        .attr('role', 'treeitem')
+        .attr('aria-label', (d) => d.label)
+        .attr('aria-level', (d) => (d.depth ?? 0) + 1)
+        .attr('aria-setsize', (d) => {
+          const parentEdge = this.allEdges.find((e) => e.target.id === d.id);
+          if (!parentEdge) return 1;
+          return this.allEdges.filter((e) => e.source.id === parentEdge.source.id).length;
+        })
+        .attr('aria-posinset', (d) => {
+          const parentEdge = this.allEdges.find((e) => e.target.id === d.id);
+          if (!parentEdge) return 1;
+          const siblings = this.allEdges.filter((e) => e.source.id === parentEdge.source.id).map((e) => e.target.id);
+          return siblings.indexOf(d.id) + 1;
+        })
+        .attr('aria-expanded', (d) => (hasOutgoing(d) ? String(!d.collapsed) : null));
+    } else {
+      selection
+        .attr('role', 'button')
+        .attr('aria-label', (d) => d.label)
+        .attr('aria-expanded', (d) => (hasOutgoing(d) ? String(!d.collapsed) : null));
+    }
   }
 
   // ── Tick ───────────────────────────────────────────────────────────────────
 
   private tick(): void {
-    this.g.select('.links').selectAll<SVGLineElement, D3Link>('line')
+    const direction = this.effectiveEdgeDirection();
+    this.g.select('.links').selectAll<SVGLineElement, D3GraphEdge>('line')
       .attr('x1', (d) => d.source.x!)
       .attr('y1', (d) => d.source.y!)
-      .attr('x2', (d) => d.target.x!)
-      .attr('y2', (d) => d.target.y!);
+      .attr('x2', (d) => this.shortenedEndpoint(d, direction).x)
+      .attr('y2', (d) => this.shortenedEndpoint(d, direction).y);
 
-    this.g.select('.nodes').selectAll<SVGGElement, D3Node>('g.node')
+    this.g.select('.nodes').selectAll<SVGGElement, D3GraphNode>('g.node')
       .attr('transform', (d) => `translate(${d.x},${d.y})`);
+  }
+
+  /** For 'arrow' mode, pulls the line's endpoint back along the source→target vector by the target's radius, so the arrowhead marker lands on the node's boundary instead of inside it. No-op for 'plain' mode. */
+  private shortenedEndpoint(d: D3GraphEdge, direction: 'arrow' | 'plain'): { x: number; y: number } {
+    if (direction === 'plain') return { x: d.target.x!, y: d.target.y! };
+
+    const dx = d.target.x! - d.source.x!;
+    const dy = d.target.y! - d.source.y!;
+    const len = Math.hypot(dx, dy);
+    if (len === 0) return { x: d.target.x!, y: d.target.y! }; // buildGraph() already rejects true self-loops; this guards a coincident-position edge case during simulation settle
+
+    const radius = nodeRadius(d.target);
+    const ratio = (len - radius) / len;
+    return { x: d.source.x! + dx * ratio, y: d.source.y! + dy * ratio };
   }
 
   // ── Collapse / expand ──────────────────────────────────────────────────────
 
-  private toggleCollapse(d: D3Node): void {
-    const hasVisible = d.children && d.children.length > 0;
-    const hasHidden = d._children && d._children.length > 0;
-    if (!hasVisible && !hasHidden) return;
+  private toggleCollapse(d: D3GraphNode): void {
+    const hasOutgoing = this.allEdges.some((e) => e.source.id === d.id);
+    if (!hasOutgoing) return;
 
-    let refocusTarget: D3Node | null = null;
-
-    if (hasVisible) {
-      if (this.focusedNodeId && this.focusedNodeId !== d.id) {
-        const focused = this.visibleNodes.find((n) => n.id === this.focusedNodeId);
-        if (focused && isDescendantOf(focused, d)) {
-          refocusTarget = d;
-        }
-      }
-      d._children = d.children;
-      d.children = [];
-      d.collapsed = true;
-      this.liveMessage.set(`${d.label} collapsed`);
-    } else {
-      d.children = d._children;
-      d._children = null;
-      d.collapsed = false;
-      this.liveMessage.set(`${d.label} expanded`);
-    }
-
+    d.collapsed = !d.collapsed;
+    this.liveMessage.set(`${d.label} ${d.collapsed ? 'collapsed' : 'expanded'}`);
     this.redraw();
 
-    if (refocusTarget) {
-      this.moveFocusTo(refocusTarget);
+    if (this.focusedNodeId && !this.visibleNodes.some((n) => n.id === this.focusedNodeId)) {
+      this.moveFocusTo(d);
     }
   }
 
   // ── Drag ───────────────────────────────────────────────────────────────────
 
-  private dragBehavior(): d3.DragBehavior<SVGGElement, D3Node, D3Node | d3.SubjectPosition> {
-    return d3.drag<SVGGElement, D3Node>()
+  private dragBehavior(): d3.DragBehavior<SVGGElement, D3GraphNode, D3GraphNode | d3.SubjectPosition> {
+    return d3.drag<SVGGElement, D3GraphNode>()
       .clickDistance(DRAG_CLICK_DISTANCE)
       .on('start', (event, d) => {
         if (!event.active) this.simulation?.alphaTarget(0.3).restart();
