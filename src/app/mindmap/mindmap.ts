@@ -429,7 +429,18 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
 
   // ── Data → D3 node tree ────────────────────────────────────────────────────
 
-  private buildTree(raw: MindmapNode, parent: D3Node | null, depth: number): D3Node {
+  /**
+   * `ancestors` tracks only the current root-to-node path (added on entry, removed on
+   * exit), not every node ever visited — so a MindmapNode legitimately reused across two
+   * sibling branches isn't flagged, only a node that is its own ancestor (a real cycle,
+   * which would otherwise recurse forever and stack-overflow instead of failing clearly).
+   */
+  private buildTree(raw: MindmapNode, parent: D3Node | null, depth: number, ancestors = new Set<MindmapNode>()): D3Node {
+    if (ancestors.has(raw)) {
+      throw new Error(`mindmap: cyclic MindmapNode graph detected at id "${raw.id}" — buildTree() requires a tree, not a graph`);
+    }
+    ancestors.add(raw);
+
     const node: D3Node = {
       id: raw.id,
       label: raw.label,
@@ -442,7 +453,9 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       x: (Math.random() - 0.5) * 60,
       y: (Math.random() - 0.5) * 60,
     };
-    node.children = (raw.children ?? []).map((c) => this.buildTree(c, node, depth + 1));
+    node.children = (raw.children ?? []).map((c) => this.buildTree(c, node, depth + 1, ancestors));
+
+    ancestors.delete(raw);
     return node;
   }
 

@@ -66,6 +66,27 @@ describe('MindmapComponent data functions', () => {
       expect(tree.collapsed).toBe(false);
       expect(tree._children).toBeNull();
     });
+
+    it('throws a clear error instead of stack-overflowing on a cyclic MindmapNode graph', () => {
+      const cyclic: MindmapNode = { id: 'root', label: 'Root', children: [] };
+      cyclic.children = [cyclic];
+
+      expect(() => (component as any).buildTree(cyclic, null, 0)).toThrow(/cyclic/i);
+    });
+
+    it('does not flag non-cyclic shared substructure (same object reused across sibling branches)', () => {
+      const shared: MindmapNode = { id: 'shared', label: 'Shared' };
+      const tree: MindmapNode = {
+        id: 'root',
+        label: 'Root',
+        children: [
+          { id: 'a', label: 'A', children: [shared] },
+          { id: 'b', label: 'B', children: [shared] },
+        ],
+      };
+
+      expect(() => (component as any).buildTree(tree, null, 0)).not.toThrow();
+    });
   });
 
   describe('flattenVisible', () => {
