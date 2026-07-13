@@ -300,6 +300,24 @@ export function resolveEntryNode(
   });
 }
 
+/**
+ * Advances the "currently selected outgoing edge" cursor for graph-mode ArrowUp/Down —
+ * mindmap.ts owns the actual per-node index (transient UI state, not graph structure).
+ * Edge order is insertion order (the order edges appear in the built D3GraphEdge array).
+ */
+export function cycleOutgoingEdge(
+  node: D3GraphNode,
+  edges: D3GraphEdge[],
+  currentIndex: number,
+  direction: 1 | -1,
+): { edge: D3GraphEdge | null; index: number } {
+  const outgoing = edges.filter((e) => e.source.id === node.id);
+  if (outgoing.length === 0) return { edge: null, index: 0 };
+
+  const index = (currentIndex + direction + outgoing.length) % outgoing.length;
+  return { edge: outgoing[index], index };
+}
+
 // ── Tree navigation (keyboard) ──────────────────────────────────────────────
 
 export function nextVisible(nodes: D3Node[], id: string): D3Node | null {

@@ -5,6 +5,7 @@ import {
   classifyShape,
   computeRadialPositions,
   computeVisibleGraph,
+  cycleOutgoingEdge,
   firstChild,
   firstVisible,
   flattenAll,
@@ -575,5 +576,43 @@ describe('resolveEntryNode', () => {
   it('returns null for an empty graph', () => {
     const { nodes, edges } = buildGraph({ nodes: [], edges: [] });
     expect(resolveEntryNode(nodes, edges)).toBeNull();
+  });
+});
+
+describe('cycleOutgoingEdge', () => {
+  const graph: MindmapGraph = {
+    nodes: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }, { id: 'c', label: 'C' }, { id: 'd', label: 'D' }],
+    edges: [{ source: 'a', target: 'b' }, { source: 'a', target: 'c' }, { source: 'a', target: 'd' }],
+  };
+
+  it('advances forward through outgoing edges in order, wrapping at the end', () => {
+    const { nodes, edges } = buildGraph(graph);
+    const a = nodes.find((n) => n.id === 'a')!;
+
+    const first = cycleOutgoingEdge(a, edges, 0, 1);
+    expect(first.edge?.target.id).toBe('c');
+    expect(first.index).toBe(1);
+
+    const wrapped = cycleOutgoingEdge(a, edges, 2, 1);
+    expect(wrapped.edge?.target.id).toBe('b');
+    expect(wrapped.index).toBe(0);
+  });
+
+  it('advances backward, wrapping at the start', () => {
+    const { nodes, edges } = buildGraph(graph);
+    const a = nodes.find((n) => n.id === 'a')!;
+
+    const back = cycleOutgoingEdge(a, edges, 0, -1);
+    expect(back.edge?.target.id).toBe('d');
+    expect(back.index).toBe(2);
+  });
+
+  it('returns a null edge and index 0 for a node with no outgoing edges', () => {
+    const { nodes, edges } = buildGraph(graph);
+    const leaf = nodes.find((n) => n.id === 'b')!;
+
+    const result = cycleOutgoingEdge(leaf, edges, 0, 1);
+    expect(result.edge).toBeNull();
+    expect(result.index).toBe(0);
   });
 });
