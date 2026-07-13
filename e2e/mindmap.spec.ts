@@ -182,4 +182,30 @@ test.describe('graph-shaped data (DAG demo)', () => {
     // Still visible via 'backend', even with 'frontend' collapsed, in per-edge mode.
     await expect(page.locator('g.node', { hasText: /^D3\.js$/ })).toBeVisible();
   });
+
+  test('graph-mode keyboard traversal: ArrowDown cursors an edge, ArrowRight commits, ArrowLeft retraces', async ({ page }) => {
+    // 'Frontend' has three outgoing edges (→angular, →react, →d3), so it can drive the
+    // outgoing-edge cursor. Everything here is real KeyboardEvents on focused DOM elements,
+    // covering the interaction end-to-end (unit tests call the private handlers directly).
+    const frontend = page.locator('g.node', { hasText: /^Frontend$/ });
+    await frontend.focus();
+    await expect(frontend).toBeFocused();
+
+    // ArrowDown moves the outgoing-edge cursor and highlights exactly one edge
+    // (highlightOutgoingCursor() sets stroke-opacity=1 on the cursored line, 0.15 on the
+    // rest) — but must NOT move focus (that's ArrowRight's job).
+    await page.keyboard.press('ArrowDown');
+    await expect(page.locator('.links line[stroke-opacity="1"]')).toHaveCount(1);
+    await expect(frontend).toBeFocused();
+
+    // ArrowRight commits to the cursored edge, moving focus to its target node.
+    await page.keyboard.press('ArrowRight');
+    await expect(frontend).not.toBeFocused();
+    const committed = page.locator('g.node:focus');
+    await expect(committed).toHaveCount(1);
+
+    // ArrowLeft retraces via arrivedVia back to the node we came from ('Frontend').
+    await page.keyboard.press('ArrowLeft');
+    await expect(frontend).toBeFocused();
+  });
 });

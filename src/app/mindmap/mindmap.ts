@@ -146,6 +146,8 @@ export class MindmapComponent implements OnInit, OnDestroy {
   private allEdges: D3GraphEdge[] = [];
   private shape: 'tree' | 'graph' = 'tree';
   private entryNode: D3GraphNode | null = null;
+  /** The tree's actual structural root (zero-indegree node) — drives radial layout + depth origin, decoupled from entryNode (focus/camera). Null for graph-shaped or empty data. */
+  private structuralRoot: D3GraphNode | null = null;
 
   private get tc(): ThemeConfig {
     return THEMES[this.theme()];
@@ -500,14 +502,20 @@ export class MindmapComponent implements OnInit, OnDestroy {
     this.allNodes = built.nodes;
     this.allEdges = built.edges;
     this.shape = classifyShape(this.allNodes, this.allEdges);
+    if (this.shape === 'tree') {
+      const hasIncoming = new Set(this.allEdges.map((e) => e.target.id));
+      this.structuralRoot = this.allNodes.find((n) => !hasIncoming.has(n.id)) ?? null;
+    } else {
+      this.structuralRoot = null;
+    }
     this.entryNode = resolveEntryNode(this.allNodes, this.allEdges, this.data().entryNodeId);
     this.outgoingCursor.clear();
     this.arrivedVia.clear();
     this.focusedNodeId = this.entryNode?.id ?? null;
 
-    if (this.shape === 'tree' && this.entryNode) {
-      const depthById = new Map<string, number>([[this.entryNode.id, 0]]);
-      const stack = [this.entryNode];
+    if (this.shape === 'tree' && this.structuralRoot) {
+      const depthById = new Map<string, number>([[this.structuralRoot.id, 0]]);
+      const stack = [this.structuralRoot];
       while (stack.length) {
         const n = stack.pop()!;
         for (const e of this.allEdges.filter((edge) => edge.source.id === n.id)) {
@@ -529,6 +537,8 @@ export class MindmapComponent implements OnInit, OnDestroy {
     const { visibleNodes, visibleEdges } = computeVisibleGraph(this.allNodes, this.allEdges, this.collapseMode());
     this.visibleNodes = visibleNodes;
 
+    if (visibleNodes.length === 0) return;
+
     let effectiveLayoutMode = this.layoutMode();
     if (effectiveLayoutMode !== 'force' && this.shape === 'graph') {
       console.warn(`mindmap: layoutMode "${effectiveLayoutMode}" requires tree-shaped data but the current data is graph-shaped — falling back to "force"`);
@@ -540,7 +550,7 @@ export class MindmapComponent implements OnInit, OnDestroy {
       return;
     }
 
-    computeRadialPositions(this.entryNode!, visibleNodes, visibleEdges);
+    computeRadialPositions(this.structuralRoot!, visibleNodes, visibleEdges);
     if (effectiveLayoutMode === 'hybrid') {
       this.syncHybridSimulation(visibleNodes, visibleEdges);
     } else {
