@@ -13,6 +13,7 @@ import {
   lastVisible,
   nextVisible,
   previousVisible,
+  resolveEntryNode,
 } from './mindmap-layout';
 
 // Pure functions — no TestBed/component instance needed to exercise them.
@@ -516,5 +517,43 @@ describe('computeVisibleGraph', () => {
 
     const { visibleNodes } = computeVisibleGraph(nodes, edges, 'global');
     expect(visibleNodes.map((n) => n.id).sort()).toEqual(['p2', 'r']);
+  });
+});
+
+describe('resolveEntryNode', () => {
+  it('returns the node matching an explicit valid entryNodeId', () => {
+    const { nodes, edges } = buildGraph(sampleGraph);
+    expect(resolveEntryNode(nodes, edges, 'a')?.id).toBe('a');
+  });
+
+  it('warns and falls back when entryNodeId does not match any node', () => {
+    const { nodes, edges } = buildGraph(sampleGraph);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const result = resolveEntryNode(nodes, edges, 'nonexistent');
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/entryNodeId "nonexistent"/i));
+    expect(result?.id).toBe('root'); // the tree's zero-indegree, most-connected node
+    warnSpy.mockRestore();
+  });
+
+  it('falls back to the zero-indegree node with the most outgoing edges when entryNodeId is omitted', () => {
+    const { nodes, edges } = buildGraph(sampleGraph);
+    expect(resolveEntryNode(nodes, edges)?.id).toBe('root');
+  });
+
+  it('falls back to the most-connected node when no zero-indegree node exists (fully cyclic)', () => {
+    const graph: MindmapGraph = {
+      nodes: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }, { id: 'c', label: 'C' }],
+      edges: [{ source: 'a', target: 'b' }, { source: 'b', target: 'c' }, { source: 'c', target: 'a' }, { source: 'c', target: 'b' }],
+    };
+    const { nodes, edges } = buildGraph(graph);
+    // 'b' has 2 incoming (a->b, c->b) + 1 outgoing (b->c) = 3 total, the most of any node.
+    expect(resolveEntryNode(nodes, edges)?.id).toBe('b');
+  });
+
+  it('returns null for an empty graph', () => {
+    const { nodes, edges } = buildGraph({ nodes: [], edges: [] });
+    expect(resolveEntryNode(nodes, edges)).toBeNull();
   });
 });

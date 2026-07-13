@@ -262,6 +262,44 @@ export function computeVisibleGraph(
   return { visibleNodes, visibleEdges };
 }
 
+/**
+ * Fallback chain: explicit entryNodeId if valid → the zero-indegree node with the most
+ * outgoing edges → (no zero-indegree node at all, e.g. fully cyclic) the most-connected
+ * node overall → null for an empty graph. A missing/invalid entryNodeId warns rather than
+ * throwing — it's a hint, not a structural requirement (see mindmap-layout.spec.ts).
+ */
+export function resolveEntryNode(
+  nodes: D3GraphNode[],
+  edges: D3GraphEdge[],
+  entryNodeId?: string,
+): D3GraphNode | null {
+  if (nodes.length === 0) return null;
+
+  if (entryNodeId) {
+    const match = nodes.find((n) => n.id === entryNodeId);
+    if (match) return match;
+    console.warn(`mindmap: entryNodeId "${entryNodeId}" does not match any node id; falling back to auto-selection`);
+  }
+
+  const inDegree = new Map<string, number>(nodes.map((n) => [n.id, 0]));
+  const outDegree = new Map<string, number>(nodes.map((n) => [n.id, 0]));
+  for (const e of edges) {
+    inDegree.set(e.target.id, (inDegree.get(e.target.id) ?? 0) + 1);
+    outDegree.set(e.source.id, (outDegree.get(e.source.id) ?? 0) + 1);
+  }
+
+  const roots = nodes.filter((n) => (inDegree.get(n.id) ?? 0) === 0);
+  if (roots.length > 0) {
+    return roots.reduce((best, n) => ((outDegree.get(n.id) ?? 0) > (outDegree.get(best.id) ?? 0) ? n : best));
+  }
+
+  return nodes.reduce((best, n) => {
+    const total = (inDegree.get(n.id) ?? 0) + (outDegree.get(n.id) ?? 0);
+    const bestTotal = (inDegree.get(best.id) ?? 0) + (outDegree.get(best.id) ?? 0);
+    return total > bestTotal ? n : best;
+  });
+}
+
 // ── Tree navigation (keyboard) ──────────────────────────────────────────────
 
 export function nextVisible(nodes: D3Node[], id: string): D3Node | null {
