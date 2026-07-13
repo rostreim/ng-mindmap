@@ -1,4 +1,5 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import * as d3 from 'd3';
 import { MindmapComponent } from './mindmap';
 import { D3GraphNode, MindmapGraph } from './mindmap.model';
 import { buildGraph } from './mindmap-layout';
@@ -29,6 +30,21 @@ describe('MindmapComponent', () => {
     fixture = TestBed.createComponent(MindmapComponent);
     component = fixture.componentInstance;
     fixture.componentRef.setInput('data', sampleGraph);
+
+    // These tests exercise toggleCollapse/onNodeKeydown/redraw() directly without triggering
+    // ngOnInit (no fixture.detectChanges()), since ngOnInit's initSvg() drives d3-zoom's setup,
+    // which touches SVG geometry APIs (e.g. viewBox.baseVal) that jsdom doesn't implement.
+    // Stub a minimal detached svg/g structure mirroring initSvg()'s shape instead, so the
+    // handful of real (unmocked) DOM touches these tests hit along the way — redraw()'s
+    // `this.svg.attr('role', ...)`, moveFocusTo()'s `this.g.select(...)` — have something to
+    // operate on. No zoom/drag behavior is attached, so none of the geometry-API-dependent
+    // code paths are exercised.
+    const svgEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    const g = d3.select(svgEl).append('g').attr('class', 'graph');
+    g.append('g').attr('class', 'links');
+    g.append('g').attr('class', 'nodes');
+    (component as any).svg = d3.select(svgEl);
+    (component as any).g = g;
   });
 
   afterEach(() => fixture.destroy());
@@ -165,6 +181,15 @@ describe('MindmapComponent', () => {
     });
 
     describe('tree-shaped data', () => {
+      beforeEach(() => {
+        // 'ArrowDown/Up' below reads real visibleNodes (DFS order), which the parent
+        // describe's blanket redraw() mock leaves stuck at [] — restore the real redraw()
+        // and mock only syncForceSimulation instead, letting real computeVisibleGraph() run
+        // (same pattern as the collapseMode nested describe above).
+        (component as any).redraw.mockRestore();
+        vi.spyOn(component as any, 'syncForceSimulation').mockImplementation(() => {});
+      });
+
       it('ArrowDown/Up move focus through the DFS-visible order', () => {
         (component as any).render();
         (component as any).moveFocusTo((component as any).allNodes.find((n: D3GraphNode) => n.id === 'root'));
