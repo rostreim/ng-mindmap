@@ -272,6 +272,9 @@ export class MindmapComponent implements OnInit, OnDestroy {
   private visibleNodes: D3Node[] = [];
   private focusedNodeId: string | null = null;
 
+  /** Rebuilt once per updateEdges() call so node hover only touches its own incident links, not every link in the graph. */
+  private linksByNode = new Map<string, D3Link[]>();
+
   constructor(private zone: NgZone, private destroyRef: DestroyRef) {
     this.zone.runOutsideAngular(() => {
       document.addEventListener('click', this.onDocumentClick);
@@ -684,6 +687,15 @@ export class MindmapComponent implements OnInit, OnDestroy {
       .attr('stroke', this.tc.edgeStroke)
       .attr('stroke-width', 1.5)
       .attr('stroke-opacity', this.tc.edgeOpacity);
+
+    this.linksByNode.clear();
+    for (const link of links) {
+      for (const id of [link.source.id, link.target.id]) {
+        const incident = this.linksByNode.get(id);
+        if (incident) incident.push(link);
+        else this.linksByNode.set(id, [link]);
+      }
+    }
   }
 
   private updateNodes(nodes: D3Node[]): void {
@@ -746,16 +758,15 @@ export class MindmapComponent implements OnInit, OnDestroy {
         this.openContextMenu(d, event.clientX, event.clientY);
       })
       .on('mouseover', (_event, d) => {
+        // linksByNode.get(d.id) returns object references from the same links array
+        // bound to these DOM elements this redraw, so reference identity via Set.has()
+        // works directly — no need to re-derive a string key per link per attr call.
+        const incident = new Set(this.linksByNode.get(d.id));
         this.g.select('.links').selectAll<SVGLineElement, D3Link>('line')
           .transition().duration(HOVER_TRANSITION_MS)
-          .attr('stroke-opacity', (link) =>
-            link.source.id === d.id || link.target.id === d.id ? 1 : 0.15)
-          .attr('stroke-width', (link) =>
-            link.source.id === d.id || link.target.id === d.id ? 2 : 1.5)
-          .attr('stroke', (link) =>
-            link.source.id === d.id || link.target.id === d.id
-              ? this.colorScale(d.depth)
-              : this.tc.edgeStroke);
+          .attr('stroke-opacity', (link) => (incident.has(link) ? 1 : 0.15))
+          .attr('stroke-width', (link) => (incident.has(link) ? 2 : 1.5))
+          .attr('stroke', (link) => (incident.has(link) ? this.colorScale(d.depth) : this.tc.edgeStroke));
       })
       .on('mouseout', () => {
         this.g.select('.links').selectAll<SVGLineElement, D3Link>('line')
