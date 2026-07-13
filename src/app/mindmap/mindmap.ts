@@ -47,6 +47,9 @@ const NODE_RADII = [18, 12, 8];
 /** Minimum pointer travel (px) before a drag suppresses the following click, so a small drag doesn't also toggle collapse. */
 const DRAG_CLICK_DISTANCE = 4;
 
+/** Duration (ms) of the edge highlight transition on node hover/unhover. */
+const HOVER_TRANSITION_MS = 150;
+
 /** Empty margin (px) kept around the graph's bounding box by zoomToFit(). */
 const FIT_PADDING = 60;
 const FIT_TRANSITION_MS = 400;
@@ -793,7 +796,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       })
       .on('mouseover', (_event, d) => {
         this.g.select('.links').selectAll<SVGLineElement, D3Link>('line')
-          .transition().duration(150)
+          .transition().duration(HOVER_TRANSITION_MS)
           .attr('stroke-opacity', (link) =>
             link.source.id === d.id || link.target.id === d.id ? 1 : 0.15)
           .attr('stroke-width', (link) =>
@@ -805,7 +808,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       })
       .on('mouseout', () => {
         this.g.select('.links').selectAll<SVGLineElement, D3Link>('line')
-          .transition().duration(150)
+          .transition().duration(HOVER_TRANSITION_MS)
           .attr('stroke-opacity', this.tc.edgeOpacity)
           .attr('stroke-width', 1.5)
           .attr('stroke', this.tc.edgeStroke);
