@@ -750,18 +750,20 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
 
   private openContextMenu(d: D3Node, x: number, y: number): void {
     if (!this.contextMenuFn) return;
-    this.contextMenuFn(d.sourceNode).then((entries) => {
-      this.zone.run(() => {
-        this.menuEntries.set(entries);
-        this.menuX.set(x);
-        this.menuY.set(y);
-        this.menuOpenerNodeId = d.id;
-        this.submenuOpenIndex.set(null);
-        this.menuFocusIndex.set(this.firstMenuIndex(entries));
-        this.menuOpen.set(true);
-      });
-      this.focusActiveMenuItem();
-    });
+    this.contextMenuFn(d.sourceNode)
+      .then((entries) => {
+        this.zone.run(() => {
+          this.menuEntries.set(entries);
+          this.menuX.set(x);
+          this.menuY.set(y);
+          this.menuOpenerNodeId = d.id;
+          this.submenuOpenIndex.set(null);
+          this.menuFocusIndex.set(this.firstMenuIndex(entries));
+          this.menuOpen.set(true);
+        });
+        this.focusActiveMenuItem();
+      })
+      .catch((err) => console.error('mindmap: contextMenuFn rejected, menu not opened', err));
   }
 
   private openContextMenuForNode(d: D3Node): void {
