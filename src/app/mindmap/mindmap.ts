@@ -17,6 +17,7 @@ import {
   computeRadialPositions,
   firstChild,
   firstVisible,
+  flattenAll,
   flattenVisible,
   isDescendantOf,
   lastVisible,
@@ -127,6 +128,9 @@ export class MindmapComponent implements OnInit, OnDestroy {
   readonly menuEntries = signal<MenuEntry[]>([]);
   private menuOpenerNodeId: string | null = null;
 
+  /** Bound to an aria-live region in the template; announces expand/collapse to screen readers. */
+  readonly liveMessage = signal('');
+
   onContextMenuClosed(reason: ContextMenuCloseReason): void {
     this.menuOpen.set(false);
     if (reason === 'escape') {
@@ -228,8 +232,11 @@ export class MindmapComponent implements OnInit, OnDestroy {
       .scaleExtent(ZOOM_SCALE_EXTENT)
       .on('zoom', (event) => this.g.attr('transform', event.transform));
 
-    // Attached outside the Angular zone so every wheel/pan tick doesn't schedule
-    // a full app-wide change-detection pass — see the constructor for the same pattern.
+    // Zoom/pan events (like the D3 tick loop elsewhere in this file) never write to a
+    // signal, so nothing here schedules change detection regardless of zone — this app
+    // has no zone.js installed (zoneless by default in Angular 21), so runOutsideAngular()
+    // is a no-op in practice. Kept for correctness if zone.js is ever reintroduced; see
+    // the "Performance contract" section of CLAUDE.md for the full explanation.
     this.zone.runOutsideAngular(() => {
       this.svg.call(this.zoomBehavior);
       this.svg.call(this.zoomBehavior.transform, d3.zoomIdentity.translate(this.width() / 2, this.height() / 2));
@@ -401,7 +408,12 @@ export class MindmapComponent implements OnInit, OnDestroy {
   // ── Render / re-render ─────────────────────────────────────────────────────
 
   private render(): void {
-    this.rootNode = buildTree(this.data(), null, 0);
+    // On a data update (not the first render), carry forward each still-present node's
+    // settled x/y instead of re-scattering the whole graph to fresh random spawn points.
+    const previousById = new Map<string, D3Node>();
+    if (this.rootNode) flattenAll(this.rootNode, previousById);
+
+    this.rootNode = buildTree(this.data(), null, 0, undefined, previousById);
     this.focusedNodeId = this.rootNode.id;
     this.redraw();
   }
@@ -736,10 +748,12 @@ export class MindmapComponent implements OnInit, OnDestroy {
       d._children = d.children;
       d.children = [];
       d.collapsed = true;
+      this.liveMessage.set(`${d.label} collapsed`);
     } else {
       d.children = d._children;
       d._children = null;
       d.collapsed = false;
+      this.liveMessage.set(`${d.label} expanded`);
     }
 
     this.redraw();

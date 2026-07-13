@@ -22,6 +22,17 @@ test('clicking a node with children collapses it, clicking again restores it', a
   await expect(page.locator('g.node')).toHaveCount(FULL_GRAPH_NODE_COUNT);
 });
 
+test('collapsing/expanding a node announces it via the aria-live region', async ({ page }) => {
+  const liveRegion = page.locator('[aria-live="polite"]');
+  const devops = page.locator('g.node', { hasText: 'DevOps' });
+
+  await devops.click();
+  await expect(liveRegion).toHaveText('DevOps collapsed');
+
+  await devops.click();
+  await expect(liveRegion).toHaveText('DevOps expanded');
+});
+
 test('keyboard arrow navigation moves the roving tabindex/focus to the next visible node', async ({ page }) => {
   const household = page.locator('g.node', { hasText: 'Household' });
   await household.focus();

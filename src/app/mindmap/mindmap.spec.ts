@@ -86,5 +86,56 @@ describe('MindmapComponent', () => {
       expect(b.children).toEqual([]);
       expect(b._children).toBeNull();
     });
+
+    it('announces the node label and new state to screen readers on collapse and expand', () => {
+      const tree: D3Node = buildTree(sampleData, null, 0);
+      (component as any).rootNode = tree;
+      const a = tree.children![0];
+
+      (component as any).toggleCollapse(a);
+      expect(component.liveMessage()).toBe('A collapsed');
+
+      (component as any).toggleCollapse(a);
+      expect(component.liveMessage()).toBe('A expanded');
+    });
+
+    it('leaves the announcement unchanged for a no-op toggle on a leaf', () => {
+      const tree: D3Node = buildTree(sampleData, null, 0);
+      (component as any).rootNode = tree;
+      const b = tree.children![1];
+
+      (component as any).toggleCollapse(b);
+
+      expect(component.liveMessage()).toBe('');
+    });
+  });
+
+  describe('render (data updates)', () => {
+    beforeEach(() => {
+      vi.spyOn(component as any, 'redraw').mockImplementation(() => {});
+    });
+
+    it('preserves prior node positions across a data update for nodes with matching ids', () => {
+      (component as any).render();
+      const firstRoot: D3Node = (component as any).rootNode;
+      firstRoot.children![0].x = 111;
+      firstRoot.children![0].y = 222;
+
+      const updated: MindmapNode = {
+        ...sampleData,
+        children: [
+          { ...sampleData.children![0], label: 'A renamed' },
+          sampleData.children![1],
+        ],
+      };
+      fixture.componentRef.setInput('data', updated);
+
+      (component as any).render();
+
+      const secondRoot: D3Node = (component as any).rootNode;
+      expect(secondRoot.children![0].x).toBe(111);
+      expect(secondRoot.children![0].y).toBe(222);
+      expect(secondRoot.children![0].label).toBe('A renamed');
+    });
   });
 });

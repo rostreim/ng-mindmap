@@ -38,10 +38,12 @@ export class ContextMenuComponent {
   @ViewChild('menuRoot') menuRootRef?: ElementRef<HTMLDivElement>;
 
   /**
-   * Attached outside the Angular zone so a click/keydown anywhere in the document doesn't
-   * schedule change detection unless it actually needs to close this menu. This component
-   * only exists while the menu is open, so — unlike a persistent document-level listener —
-   * there's no need for an internal open/closed guard.
+   * runOutsideAngular()/run() here are no-ops in practice — this app has no zone.js
+   * installed (zoneless by default in Angular 21; see CLAUDE.md's "Performance contract"),
+   * and `closed.emit()` schedules change detection on its own regardless. Kept for
+   * correctness if zone.js is ever reintroduced. This component only exists while the menu
+   * is open, so — unlike a persistent document-level listener — there's no need for an
+   * internal open/closed guard.
    */
   constructor(private zone: NgZone, private destroyRef: DestroyRef) {
     const onDocumentClick = (): void => this.zone.run(() => this.closed.emit('outside-click'));

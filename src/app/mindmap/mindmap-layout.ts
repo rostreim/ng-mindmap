@@ -13,16 +13,24 @@ export const RADIAL_RING_SPACING = 100;
  * sibling branches isn't flagged, only a node that is its own ancestor (a real cycle,
  * which would otherwise recurse forever and stack-overflow instead of failing clearly).
  */
+/**
+ * `previousById`, when given, carries x/y forward from a prior D3Node tree for any node
+ * whose id still exists — so a `data` update (e.g. a label edit or one new leaf) doesn't
+ * re-scatter every already-settled node to a fresh random spawn position.
+ */
 export function buildTree(
   raw: MindmapNode,
   parent: D3Node | null,
   depth: number,
   ancestors = new Set<MindmapNode>(),
+  previousById?: Map<string, D3Node>,
 ): D3Node {
   if (ancestors.has(raw)) {
     throw new Error(`mindmap: cyclic MindmapNode graph detected at id "${raw.id}" — buildTree() requires a tree, not a graph`);
   }
   ancestors.add(raw);
+
+  const previous = previousById?.get(raw.id);
 
   const node: D3Node = {
     id: raw.id,
@@ -33,10 +41,10 @@ export function buildTree(
     children: null,
     parent,
     sourceNode: raw,
-    x: (Math.random() - 0.5) * 60,
-    y: (Math.random() - 0.5) * 60,
+    x: previous?.x ?? (Math.random() - 0.5) * 60,
+    y: previous?.y ?? (Math.random() - 0.5) * 60,
   };
-  node.children = (raw.children ?? []).map((c) => buildTree(c, node, depth + 1, ancestors));
+  node.children = (raw.children ?? []).map((c) => buildTree(c, node, depth + 1, ancestors, previousById));
 
   ancestors.delete(raw);
   return node;
@@ -48,6 +56,13 @@ export function flattenVisible(node: D3Node, nodes: D3Node[], links: D3Link[]): 
     links.push({ source: node, target: c });
     flattenVisible(c, nodes, links);
   });
+}
+
+/** Collects every node by id, both currently visible (`children`) and collapsed-away (`_children`). */
+export function flattenAll(node: D3Node, map: Map<string, D3Node>): void {
+  map.set(node.id, node);
+  (node.children ?? []).forEach((c) => flattenAll(c, map));
+  (node._children ?? []).forEach((c) => flattenAll(c, map));
 }
 
 // ── Tree navigation (keyboard) ──────────────────────────────────────────────
