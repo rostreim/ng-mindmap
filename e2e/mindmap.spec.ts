@@ -40,12 +40,15 @@ test('zoom-to-fit recenters the graph after a manual pan', async ({ page }) => {
   const svg = page.locator('svg.mindmap-svg');
   const box = await svg.boundingBox();
   if (!box) throw new Error('svg not visible');
-  const cx = box.x + box.width / 2;
-  const cy = box.y + box.height / 2;
+  // Start from a corner, not the center: the root node loads positioned near the viewport
+  // center, so a center-anchored drag risks grabbing it (triggering a node drag) instead of
+  // panning the empty canvas.
+  const startX = box.x + 20;
+  const startY = box.y + 20;
 
-  await page.mouse.move(cx, cy);
+  await page.mouse.move(startX, startY);
   await page.mouse.down();
-  await page.mouse.move(cx + 150, cy + 100, { steps: 5 });
+  await page.mouse.move(startX + 150, startY + 100, { steps: 5 });
   await page.mouse.up();
 
   const afterPan = await graph.getAttribute('transform');
