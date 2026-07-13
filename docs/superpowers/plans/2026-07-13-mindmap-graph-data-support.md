@@ -564,79 +564,16 @@ function findVisibilitySeeds(nodes: D3GraphNode[], edges: D3GraphEdge[]): D3Grap
 }
 
 /**
- * 'global': a node is visible only if reachable from a seed without passing through any
- * collapsed node. 'per-edge': a node is visible if reachable via *any* path that avoids
- * collapsed nodes — so it stays visible via a non-collapsed parent even while another
- * parent is collapsed. Both are a single O(V+E) walk, fully recomputed (no incremental
- * patching), same philosophy as the old flattenVisible().
+ * Two-phase, not two independent branches. Phase 1 is one forward walk from the seeds —
+ * identical for both modes — that already gives 'per-edge' semantics: a node is visible if
+ * reachable via any path that never passes through a collapsed node (so a shared node stays
+ * visible via a non-collapsed parent even while another parent is collapsed). Phase 2 runs
+ * only for 'global' mode: a pruning pass that removes anything downstream of a collapsed
+ * node *unconditionally*, even if some other path also reaches it — this is what makes
+ * collapsing one parent hide a shared descendant everywhere, the behavior 'per-edge' must
+ * NOT have. Both phases are O(V+E); fully recomputed each call, no incremental patching,
+ * same philosophy as the old flattenVisible().
  */
-export function computeVisibleGraph(
-  nodes: D3GraphNode[],
-  edges: D3GraphEdge[],
-  collapseMode: 'global' | 'per-edge',
-): { visibleNodes: D3GraphNode[]; visibleEdges: D3GraphEdge[] } {
-  const outgoing = new Map<string, D3GraphEdge[]>();
-  for (const e of edges) outgoing.set(e.source.id, [...(outgoing.get(e.source.id) ?? []), e]);
-
-  const seeds = findVisibilitySeeds(nodes, edges);
-  const visible = new Set<string>();
-
-  if (collapseMode === 'global') {
-    const stack = [...seeds];
-    while (stack.length) {
-      const n = stack.pop()!;
-      if (visible.has(n.id)) continue;
-      visible.add(n.id);
-      if (n.collapsed) continue; // don't descend past a collapsed node
-      for (const e of outgoing.get(n.id) ?? []) stack.push(e.target);
-    }
-  } else {
-    // per-edge: BFS ignoring only edges whose *source* is collapsed, so a node reachable
-    // via a non-collapsed path still gets visited even if another path to it is blocked.
-    const stack = [...seeds];
-    while (stack.length) {
-      const n = stack.pop()!;
-      if (visible.has(n.id)) continue;
-      visible.add(n.id);
-      if (n.collapsed) continue;
-      for (const e of outgoing.get(n.id) ?? []) {
-        if (!visible.has(e.target.id)) stack.push(e.target);
-      }
-    }
-  }
-
-  const visibleNodes = nodes.filter((n) => visible.has(n.id));
-  const visibleEdges = edges.filter((e) => visible.has(e.source.id) && visible.has(e.target.id));
-  return { visibleNodes, visibleEdges };
-}
-```
-
-Note: the `'global'` and `'per-edge'` branches above are structurally identical (both stop descending past a `collapsed` node) — this is correct as written because the *shared-node* case is what differs, and it's already handled by the DFS/BFS naturally visiting a node from *any* seed/parent that reaches it first: once `shared` is marked visible via `p2`'s non-collapsed path, `p1` being collapsed can't un-visit it. Verify this against the "global mode hides everywhere" test in Step 1 — if it fails, the fix is to make `'global'` mode track *which* nodes are collapsed-away independent of multi-parent reachability (i.e., a node is hidden in `'global'` mode if *any* of its incoming edges comes from a collapsed node, not just "unreachable via BFS") — implement `'global'` as: visible if reachable from a seed *and* no node on *every* path to it is collapsed is wrong; simplest correct `'global'` rule is: a node is hidden if it has at least one collapsed ancestor via *any* path. Use this instead for the `'global'` branch:
-
-```ts
-  if (collapseMode === 'global') {
-    // A node is hidden if *any* path from a seed to it passes through a collapsed node —
-    // i.e. visible only if there's a path with zero collapsed nodes among its ancestors.
-    // Compute per-node "has a collapsed ancestor on some path" via forward propagation:
-    // a node is hidden if it's collapsed itself is irrelevant to its OWN visibility (a
-    // collapsed node is still visible; only its descendants are hidden), or if every
-    // incoming edge's source is either hidden or collapsed.
-    const hidden = new Set<string>();
-    const inOrder = topologicalOrderFrom(seeds, outgoing); // seeds first, then reachable in edge order
-    for (const n of inOrder) {
-      const incoming = edges.filter((e) => e.target.id === n.id);
-      if (incoming.length === 0) continue; // a seed is never hidden by definition
-      const blockedByEvery = incoming.every((e) => hidden.has(e.source.id) || e.source.collapsed);
-      if (blockedByEvery) hidden.add(n.id);
-    }
-    for (const seed of seeds) visible.add(seed.id);
-    for (const n of nodes) if (!hidden.has(n.id) && reachableFrom(seeds, outgoing).has(n.id)) visible.add(n.id);
-  } else {
-```
-
-Replace the whole function body with this corrected, single-pass version instead of the two-branch sketch above — implement it as:
-
-```ts
 export function computeVisibleGraph(
   nodes: D3GraphNode[],
   edges: D3GraphEdge[],
@@ -647,6 +584,7 @@ export function computeVisibleGraph(
   const seeds = findVisibilitySeeds(nodes, edges);
   const seedIds = new Set(seeds.map((s) => s.id));
 
+  // Phase 1: forward walk, stopping at (but including) any collapsed node.
   const visible = new Set<string>();
   const stack = [...seeds];
   while (stack.length) {
@@ -656,11 +594,9 @@ export function computeVisibleGraph(
     if (n.collapsed) continue; // never descend past a collapsed node, in either mode
     for (const e of outgoing.get(n.id) ?? []) stack.push(e.target);
   }
-  // 'global' is exactly the walk above: a node reached from ANY seed via a non-collapsed
-  // path is visible — but that's wrong for "collapsing one parent hides it everywhere".
-  // The distinguishing rule is about *pruning*, not reachability: in 'global' mode, once a
-  // node is reached from a collapsed ancestor on ANY path, remove it even if another path
-  // also reaches it. Do a second pass for 'global' only:
+
+  // Phase 2 ('global' only): unconditionally prune everything downstream of a collapsed
+  // node, even if another path also reaches it.
   if (collapseMode === 'global') {
     const collapsedIds = new Set(nodes.filter((n) => n.collapsed).map((n) => n.id));
     for (const collapsedId of collapsedIds) {
@@ -680,8 +616,6 @@ export function computeVisibleGraph(
   return { visibleNodes, visibleEdges };
 }
 ```
-
-This final version is the one to actually type into the file — it's a single forward walk (identical for both modes, giving `'per-edge'` semantics: visible if reachable via any non-collapsed-node path) followed by a `'global'`-only pruning pass that removes anything downstream of a collapsed node *unconditionally*, even if some other path also reaches it. Delete the two intermediate sketches above; they exist here only to show why the naive single-branch version is wrong — don't transcribe them into the source file.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1760,8 +1694,8 @@ Replace the `computeRadialPositions` describe block in `src/app/mindmap/mindmap-
 ```ts
 describe('computeRadialPositions', () => {
   it('places a lone root at the origin without dividing by zero', () => {
-    const { nodes } = buildGraph({ nodes: [{ id: 'solo', label: 'Solo' }], edges: [] });
-    computeRadialPositions(nodes[0], nodes);
+    const { nodes, edges } = buildGraph({ nodes: [{ id: 'solo', label: 'Solo' }], edges: [] });
+    computeRadialPositions(nodes[0], nodes, edges);
     expect(nodes[0].targetX).toBeCloseTo(0);
     expect(nodes[0].targetY).toBeCloseTo(0);
   });
@@ -1769,7 +1703,7 @@ describe('computeRadialPositions', () => {
   it('places nodes at increasing radius by depth, with distinct angles for siblings', () => {
     const { nodes, edges } = buildGraph(sampleGraph);
     const root = nodes.find((n) => n.id === 'root')!;
-    computeRadialPositions(root, nodes);
+    computeRadialPositions(root, nodes, edges);
 
     const dist = (n: D3GraphNode) => Math.sqrt(n.targetX! ** 2 + n.targetY! ** 2);
     const a = nodes.find((n) => n.id === 'a')!;
@@ -1783,11 +1717,12 @@ describe('computeRadialPositions', () => {
   });
 
   it('only positions the nodes passed in visibleNodes', () => {
-    const { nodes } = buildGraph(sampleGraph);
+    const { nodes, edges } = buildGraph(sampleGraph);
     const root = nodes.find((n) => n.id === 'root')!;
     const a = nodes.find((n) => n.id === 'a')!;
     const b = nodes.find((n) => n.id === 'b')!;
-    computeRadialPositions(root, [root, a, b]); // a1/a2 excluded, as if collapsed
+    const visibleEdges = edges.filter((e) => e.source.id !== 'a'); // drop a->a1, a->a2, as if 'a' were collapsed
+    computeRadialPositions(root, [root, a, b], visibleEdges); // a1/a2 excluded
 
     const a1 = nodes.find((n) => n.id === 'a1')!;
     expect(a1.targetX).toBeUndefined();
@@ -1798,44 +1733,20 @@ describe('computeRadialPositions', () => {
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `npx vitest run src/app/mindmap/mindmap-layout.spec.ts`
-Expected: FAIL — `computeRadialPositions()`'s current signature takes a nested `D3Node` and no longer exists after Task 7's deletion of `D3Node`.
+Expected: FAIL — `computeRadialPositions()`'s current signature takes a nested `D3Node` (which no longer exists after Task 7's deletion) and only two parameters, not three.
 
 - [ ] **Step 3: Rewrite `computeRadialPositions()`**
 
-Replace the existing `computeRadialPositions()` in `src/app/mindmap/mindmap-layout.ts` (it previously used `d3.hierarchy(rootNode)` walking `.children`, which no longer exists on `D3GraphNode`):
+Replace the existing `computeRadialPositions()` in `src/app/mindmap/mindmap-layout.ts` (it previously used `d3.hierarchy(rootNode)` walking `.children`, which no longer exists on `D3GraphNode` — a flat structure needs the edge list passed in explicitly to reconstruct parent/child relationships):
 
 ```ts
 /**
  * Computes deterministic radial-tree target positions for `visibleNodes` (a subset of the
  * full node set, e.g. with a collapsed subtree excluded), rooted at `root`. Builds a d3
- * hierarchy explicitly from the visible edge set rather than walking a nested `.children`
- * (D3GraphNode is flat — see mindmap.model.ts) — same d3-hierarchy/d3-tree math as before,
- * just fed an adjacency function instead of a property accessor.
+ * hierarchy from `visibleEdges` rather than walking a nested `.children` (D3GraphNode is
+ * flat — see mindmap.model.ts) — same d3-hierarchy/d3-tree math as before, just fed an
+ * adjacency function instead of a property accessor.
  */
-export function computeRadialPositions(root: D3GraphNode, visibleNodes: D3GraphNode[]): void {
-  const visibleIds = new Set(visibleNodes.map((n) => n.id));
-  const childrenById = new Map<string, D3GraphNode[]>();
-  // Rebuilt from scratch each call: cheap (O(visible edges)), and this function has no
-  // access to the full edge list — the caller (mindmap.ts) already filtered `visibleNodes`,
-  // so reconstructing parent/child pairs here needs the edges too.
-  // (mindmap.ts passes the visible edge-derived adjacency via a closure — see call site.)
-  const hierarchyRoot = d3.hierarchy(root, (n) => childrenById.get(n.id) ?? []);
-  const maxRadius = hierarchyRoot.height * RADIAL_RING_SPACING;
-  const layout = d3.tree<D3GraphNode>().size([2 * Math.PI, maxRadius]);
-
-  layout(hierarchyRoot).each((node) => {
-    if (!visibleIds.has(node.data.id)) return;
-    const angle = node.x - Math.PI / 2;
-    const radius = node.y;
-    node.data.targetX = radius * Math.cos(angle);
-    node.data.targetY = radius * Math.sin(angle);
-  });
-}
-```
-
-The comment above flags a real gap: this function needs the *edges* to know parent/child relationships, not just the node list. Fix the signature to take edges too — replace the whole function with this corrected version instead:
-
-```ts
 export function computeRadialPositions(root: D3GraphNode, visibleNodes: D3GraphNode[], visibleEdges: D3GraphEdge[]): void {
   const visibleIds = new Set(visibleNodes.map((n) => n.id));
   const childrenById = new Map<string, D3GraphNode[]>();
@@ -1856,8 +1767,6 @@ export function computeRadialPositions(root: D3GraphNode, visibleNodes: D3GraphN
   });
 }
 ```
-
-Update the Step 1 test calls accordingly — every `computeRadialPositions(root, nodes)` call in the spec becomes `computeRadialPositions(root, nodes, edges)` (pass the `edges` array returned alongside `nodes` from each test's `buildGraph()` call; for the two single-call tests that destructured only `{ nodes }`, change to `const { nodes, edges } = buildGraph(...)` and pass both).
 
 - [ ] **Step 4: Fix the `mindmap.ts` call site left pending from Task 8**
 
@@ -2248,5 +2157,5 @@ EOF
 ## Self-Review Notes (for whoever executes this plan)
 
 - **Spec coverage:** Data model (Task 1, 7), layout gating (Task 8), collapse/expand both modes (Task 4, 9), keyboard nav both branches (Task 6, 10), ARIA both patterns (Task 11), error handling (Task 2), edge direction (Task 12), migration (Task 13), testing (Tasks 2–6, 8–10, 14). Every named spec section has a task.
-- **`computeVisibleGraph()` (Task 4) has an intentionally-shown wrong turn** in its own task body — the naive single-branch walk doesn't actually implement `'global'` mode correctly, and the task talks through why before giving the corrected version. This is deliberate: whoever implements Task 4 needs to understand *why* the pruning pass is necessary, not just copy code, since it's the single trickiest piece of logic in this whole plan. Transcribe only the final corrected version into the source file.
+- **`computeVisibleGraph()` (Task 4) is the trickiest logic in this plan** — it's a two-phase algorithm (a shared forward walk, then a `'global'`-only pruning pass), not two independent per-mode branches. An earlier draft of this task showed a naive single-branch version before the correct one; that's been removed — the task now shows only the final, correct two-phase implementation with a comment explaining why each phase exists. Whoever implements Task 4 should still read that comment closely, since transcribing the code without understanding the two-phase distinction risks "fixing" it back into the naive (wrong) version during any later touch-up.
 - **Task 7 is a deliberate break-the-build task** — the app does not compile from Task 7 through Task 12. This is flagged explicitly in Task 7's description; execute Tasks 7–12 as one contiguous block without pausing for a full-suite green check until Task 12 Step 7.
