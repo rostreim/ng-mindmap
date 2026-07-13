@@ -174,14 +174,14 @@ export class MindmapComponent implements OnInit, OnDestroy {
       this.theme();
       if (themeFirstRun) { themeFirstRun = false; return; }
       this.applyThemeToBackground();
-      if (this.rootNode) this.redraw();
+      if (this.allNodes.length) this.redraw();
     });
 
     let layoutModeFirstRun = true;
     effect(() => {
       this.layoutMode();
       if (layoutModeFirstRun) { layoutModeFirstRun = false; return; }
-      if (this.rootNode) {
+      if (this.allNodes.length) {
         this.redraw();
         this.zoomToFitAfterSettle();
       }
