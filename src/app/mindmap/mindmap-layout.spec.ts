@@ -542,13 +542,33 @@ describe('resolveEntryNode', () => {
     expect(resolveEntryNode(nodes, edges)?.id).toBe('root');
   });
 
+  it('picks the zero-indegree node with more outgoing edges when multiple roots exist', () => {
+    const graph: MindmapGraph = {
+      nodes: [
+        { id: 'x', label: 'X' },
+        { id: 'y', label: 'Y' },
+        { id: 'x1', label: 'X1' },
+        { id: 'y1', label: 'Y1' },
+        { id: 'y2', label: 'Y2' },
+      ],
+      edges: [
+        { source: 'x', target: 'x1' },     // x has 1 outgoing edge
+        { source: 'y', target: 'y1' },     // y has 2 outgoing edges
+        { source: 'y', target: 'y2' },
+      ],
+    };
+    const { nodes, edges } = buildGraph(graph);
+    // Both x and y have zero incoming edges (both are roots), but y has more outgoing edges.
+    expect(resolveEntryNode(nodes, edges)?.id).toBe('y');
+  });
+
   it('falls back to the most-connected node when no zero-indegree node exists (fully cyclic)', () => {
     const graph: MindmapGraph = {
       nodes: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }, { id: 'c', label: 'C' }],
-      edges: [{ source: 'a', target: 'b' }, { source: 'b', target: 'c' }, { source: 'c', target: 'a' }, { source: 'c', target: 'b' }],
+      edges: [{ source: 'a', target: 'b' }, { source: 'b', target: 'c' }, { source: 'c', target: 'a' }, { source: 'c', target: 'b' }, { source: 'b', target: 'a' }],
     };
     const { nodes, edges } = buildGraph(graph);
-    // 'b' has 2 incoming (a->b, c->b) + 1 outgoing (b->c) = 3 total, the most of any node.
+    // 'b' has 2 incoming (a->b, c->b) + 2 outgoing (b->c, b->a) = 4 total, the most of any node.
     expect(resolveEntryNode(nodes, edges)?.id).toBe('b');
   });
 
