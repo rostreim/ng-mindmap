@@ -129,6 +129,11 @@ describe('MindmapComponent', () => {
     });
 
     describe('collapseMode: global vs per-edge (DAG-only behavior)', () => {
+      beforeEach(() => {
+        (component as any).redraw.mockRestore();
+        vi.spyOn(component as any, 'syncForceSimulation').mockImplementation(() => {});
+      });
+
       it('global mode: collapsing one parent hides the shared node even via the other parent', () => {
         fixture.componentRef.setInput('data', sharedGraph);
         fixture.componentRef.setInput('collapseMode', 'global');
