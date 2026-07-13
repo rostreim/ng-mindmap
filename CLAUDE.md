@@ -35,11 +35,11 @@ MindmapNode (input tree)
 ### Component internals (`mindmap.ts`)
 
 - **`initSvg()`** — called once in `ngOnInit`; sets up the SVG, dark background rect, zoom/pan behavior, and the root `<g class="graph">` container.
-- **`render()`** — called on first init and on `data` input changes; rebuilds the full `D3Node` tree from scratch.
+- **`render()`** — called on first init and on `data` input changes; rebuilds the full `D3Node` tree via `buildTree()`, reusing each still-present node's settled `x`/`y` from the previous tree (matched by id, via `flattenAll()`) instead of re-scattering the whole graph to fresh random spawn points.
 - **`redraw()`** — called after every collapse/expand, theme change, or `layoutMode` change; re-flattens visible nodes and dispatches to one of three sync methods based on `layoutMode`.
-- **`syncForceSimulation()` / `syncHybridSimulation()` / `syncRadialLayout()`** — patch the DOM and (where applicable) the D3 force simulation via `join()` rather than tearing down and re-appending everything, so unaffected nodes keep their element identity across a redraw. All three run *outside Angular's zone* via `NgZone.runOutsideAngular`.
+- **`syncForceSimulation()` / `syncHybridSimulation()` / `syncRadialLayout()`** — patch the DOM and (where applicable) the D3 force simulation via `join()` rather than tearing down and re-appending everything, so unaffected nodes keep their element identity across a redraw. See Performance contract below for why none of this needs any explicit zone handling.
 - **`computeRadialPositions()`** — pure `d3-hierarchy`/`d3-tree` math (no DOM), used by `'radial'` and `'hybrid'` layout modes to compute deterministic target positions.
-- **`toggleCollapse()`** — swaps `children ↔ _children` on the clicked node, then calls `redraw()`.
+- **`toggleCollapse()`** — swaps `children ↔ _children` on the clicked node, then calls `redraw()`. Also pushes a message onto `liveMessage`, an `aria-live="polite"` signal bound in `mindmap.html` that announces the new state to screen readers. The click/keydown handlers push their own `liveMessage` when `nodeClickFn()` intercepts instead (node "activated" rather than collapsed/expanded).
 
 ### Layout modes
 
@@ -51,7 +51,9 @@ MindmapNode (input tree)
 
 ### Performance contract
 
-`ChangeDetectionStrategy.OnPush` + `NgZone.runOutsideAngular` means D3's tick loop (in `force`/`hybrid` modes) is invisible to Angular. Only structural changes (input swap, collapse, layout mode switch) trigger Angular work.
+`ChangeDetectionStrategy.OnPush` keeps this component's re-renders scoped to structural changes (input swap, collapse, layout mode switch). The D3 tick loop, drag handler, pan/zoom callbacks, and DOM event listeners (in `mindmap.ts` and `context-menu.ts`) never write to a signal or call an `output()`, so none of them schedule change detection on their own — regardless of zone.
+
+This app has no `zone.js` installed (Angular 21 runs zoneless by default without it) and neither `MindmapComponent` nor `ContextMenuComponent` inject `NgZone` — there's nothing to escape or re-enter. Change detection here is entirely signal-driven: a `signal.set()`/`output().emit()` schedules it, and D3's own DOM mutations (tick, drag, pan/zoom) are invisible to Angular simply because they never touch either.
 
 ### Styling
 

@@ -3,7 +3,6 @@ import {
   Component,
   DestroyRef,
   ElementRef,
-  NgZone,
   ViewChild,
   effect,
   input,
@@ -38,20 +37,16 @@ export class ContextMenuComponent {
   @ViewChild('menuRoot') menuRootRef?: ElementRef<HTMLDivElement>;
 
   /**
-   * Attached outside the Angular zone so a click/keydown anywhere in the document doesn't
-   * schedule change detection unless it actually needs to close this menu. This component
-   * only exists while the menu is open, so — unlike a persistent document-level listener —
-   * there's no need for an internal open/closed guard.
+   * This component only exists while the menu is open, so — unlike a persistent
+   * document-level listener — there's no need for an internal open/closed guard.
    */
-  constructor(private zone: NgZone, private destroyRef: DestroyRef) {
-    const onDocumentClick = (): void => this.zone.run(() => this.closed.emit('outside-click'));
+  constructor(private destroyRef: DestroyRef) {
+    const onDocumentClick = (): void => this.closed.emit('outside-click');
     const onDocumentKeydown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') this.zone.run(() => this.closed.emit('escape'));
+      if (event.key === 'Escape') this.closed.emit('escape');
     };
-    this.zone.runOutsideAngular(() => {
-      document.addEventListener('click', onDocumentClick);
-      document.addEventListener('keydown', onDocumentKeydown);
-    });
+    document.addEventListener('click', onDocumentClick);
+    document.addEventListener('keydown', onDocumentKeydown);
     this.destroyRef.onDestroy(() => {
       document.removeEventListener('click', onDocumentClick);
       document.removeEventListener('keydown', onDocumentKeydown);

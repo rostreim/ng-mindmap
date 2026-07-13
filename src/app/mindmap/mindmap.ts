@@ -5,7 +5,6 @@ import {
   OnInit,
   ViewChild,
   ChangeDetectionStrategy,
-  NgZone,
   effect,
   input,
   signal,
@@ -17,6 +16,7 @@ import {
   computeRadialPositions,
   firstChild,
   firstVisible,
+  flattenAll,
   flattenVisible,
   isDescendantOf,
   lastVisible,
@@ -127,6 +127,14 @@ export class MindmapComponent implements OnInit, OnDestroy {
   readonly menuEntries = signal<MenuEntry[]>([]);
   private menuOpenerNodeId: string | null = null;
 
+  /**
+   * Bound to an aria-live region in the template. Announces expand/collapse
+   * (toggleCollapse()) and node activation — when nodeClickFn() intercepts a
+   * click/Enter/Space and suppresses the default toggle, e.g. a consumer treating a
+   * leaf click as "select this node" — to screen readers.
+   */
+  readonly liveMessage = signal('');
+
   onContextMenuClosed(reason: ContextMenuCloseReason): void {
     this.menuOpen.set(false);
     if (reason === 'escape') {
@@ -158,7 +166,7 @@ export class MindmapComponent implements OnInit, OnDestroy {
   /** Rebuilt once per updateEdges() call so node hover only touches its own incident links, not every link in the graph. */
   private linksByNode = new Map<string, D3Link[]>();
 
-  constructor(private zone: NgZone) {
+  constructor() {
     // Each effect's first run happens once ngOnInit's own initSvg()/render() have already
     // set up the initial state, so it's skipped here — mirrors the old ngOnChanges'
     // `!changes[...].firstChange` checks, just per-input instead of via a single dispatcher.
@@ -228,12 +236,8 @@ export class MindmapComponent implements OnInit, OnDestroy {
       .scaleExtent(ZOOM_SCALE_EXTENT)
       .on('zoom', (event) => this.g.attr('transform', event.transform));
 
-    // Attached outside the Angular zone so every wheel/pan tick doesn't schedule
-    // a full app-wide change-detection pass — see the constructor for the same pattern.
-    this.zone.runOutsideAngular(() => {
-      this.svg.call(this.zoomBehavior);
-      this.svg.call(this.zoomBehavior.transform, d3.zoomIdentity.translate(this.width() / 2, this.height() / 2));
-    });
+    this.svg.call(this.zoomBehavior);
+    this.svg.call(this.zoomBehavior.transform, d3.zoomIdentity.translate(this.width() / 2, this.height() / 2));
   }
 
   private applyThemeToBackground(): void {
@@ -368,7 +372,10 @@ export class MindmapComponent implements OnInit, OnDestroy {
       case 'Enter':
       case ' ': {
         event.preventDefault();
-        if (this.nodeClickFn()?.(d.sourceNode) === true) return;
+        if (this.nodeClickFn()?.(d.sourceNode) === true) {
+          this.liveMessage.set(`${d.label} activated`);
+          return;
+        }
         this.toggleCollapse(d);
         break;
       }
@@ -401,7 +408,12 @@ export class MindmapComponent implements OnInit, OnDestroy {
   // ── Render / re-render ─────────────────────────────────────────────────────
 
   private render(): void {
-    this.rootNode = buildTree(this.data(), null, 0);
+    // On a data update (not the first render), carry forward each still-present node's
+    // settled x/y instead of re-scattering the whole graph to fresh random spawn points.
+    const previousById = new Map<string, D3Node>();
+    if (this.rootNode) flattenAll(this.rootNode, previousById);
+
+    this.rootNode = buildTree(this.data(), null, 0, undefined, previousById);
     this.focusedNodeId = this.rootNode.id;
     this.redraw();
   }
@@ -414,15 +426,15 @@ export class MindmapComponent implements OnInit, OnDestroy {
     this.visibleNodes = nodes;
 
     if (this.layoutMode() === 'force') {
-      this.zone.runOutsideAngular(() => this.syncForceSimulation(nodes, links));
+      this.syncForceSimulation(nodes, links);
       return;
     }
 
     computeRadialPositions(this.rootNode);
     if (this.layoutMode() === 'hybrid') {
-      this.zone.runOutsideAngular(() => this.syncHybridSimulation(nodes, links));
+      this.syncHybridSimulation(nodes, links);
     } else {
-      this.zone.runOutsideAngular(() => this.syncRadialLayout(nodes, links));
+      this.syncRadialLayout(nodes, links);
     }
   }
 
@@ -592,13 +604,11 @@ export class MindmapComponent implements OnInit, OnDestroy {
     if (!contextMenuFn) return;
     contextMenuFn(d.sourceNode)
       .then((entries) => {
-        this.zone.run(() => {
-          this.menuEntries.set(entries);
-          this.menuX.set(x);
-          this.menuY.set(y);
-          this.menuOpenerNodeId = d.id;
-          this.menuOpen.set(true);
-        });
+        this.menuEntries.set(entries);
+        this.menuX.set(x);
+        this.menuY.set(y);
+        this.menuOpenerNodeId = d.id;
+        this.menuOpen.set(true);
       })
       .catch((err) => console.error('mindmap: contextMenuFn rejected, menu not opened', err));
   }
@@ -619,10 +629,13 @@ export class MindmapComponent implements OnInit, OnDestroy {
     const nodeGroup = enter.append('g')
       .attr('class', 'node')
       .call(this.dragBehavior())
-      .on('click', (_event, d) => this.zone.run(() => {
-        if (this.nodeClickFn()?.(d.sourceNode) === true) return;
+      .on('click', (_event, d) => {
+        if (this.nodeClickFn()?.(d.sourceNode) === true) {
+          this.liveMessage.set(`${d.label} activated`);
+          return;
+        }
         this.toggleCollapse(d);
-      }))
+      })
       .on('contextmenu', (event: MouseEvent, d: D3Node) => {
         event.preventDefault();
         event.stopPropagation();
@@ -646,7 +659,7 @@ export class MindmapComponent implements OnInit, OnDestroy {
           .attr('stroke-width', 1.5)
           .attr('stroke', this.tc.edgeStroke);
       })
-      .on('keydown', (event: KeyboardEvent, d: D3Node) => this.zone.run(() => this.onNodeKeydown(event, d)));
+      .on('keydown', (event: KeyboardEvent, d: D3Node) => this.onNodeKeydown(event, d));
 
     const inner = nodeGroup.append('g').attr('class', 'node-scale');
     inner.append('circle').attr('class', 'halo').attr('filter', 'url(#mm-glow)');
@@ -736,10 +749,12 @@ export class MindmapComponent implements OnInit, OnDestroy {
       d._children = d.children;
       d.children = [];
       d.collapsed = true;
+      this.liveMessage.set(`${d.label} collapsed`);
     } else {
       d.children = d._children;
       d._children = null;
       d.collapsed = false;
+      this.liveMessage.set(`${d.label} expanded`);
     }
 
     this.redraw();

@@ -4,6 +4,7 @@ import {
   computeRadialPositions,
   firstChild,
   firstVisible,
+  flattenAll,
   flattenVisible,
   isDescendantOf,
   lastVisible,
@@ -75,6 +76,38 @@ describe('buildTree', () => {
     };
 
     expect(() => buildTree(tree, null, 0)).not.toThrow();
+  });
+
+  it('reuses x/y from a previous D3Node with the same id instead of randomizing', () => {
+    const previousById = new Map<string, D3Node>();
+    previousById.set('a', { ...buildTree(sampleData, null, 0).children![0], x: 123, y: 456 });
+
+    const rebuilt: D3Node = buildTree(sampleData, null, 0, undefined, previousById);
+
+    expect(rebuilt.children![0].x).toBe(123);
+    expect(rebuilt.children![0].y).toBe(456);
+  });
+
+  it('assigns a fresh random position (unchanged spawn range) to a node absent from previousById', () => {
+    const tree: D3Node = buildTree(sampleData, null, 0, undefined, new Map());
+
+    expect(tree.x).toBeDefined();
+    expect(Math.abs(tree.x!)).toBeLessThanOrEqual(30);
+  });
+});
+
+describe('flattenAll', () => {
+  it('collects every node by id, including ones hidden behind a collapse (_children)', () => {
+    const tree: D3Node = buildTree(sampleData, null, 0);
+    const a = tree.children![0];
+    a._children = a.children;
+    a.children = [];
+
+    const map = new Map<string, D3Node>();
+    flattenAll(tree, map);
+
+    expect([...map.keys()].sort()).toEqual(['a', 'a1', 'a2', 'b', 'root']);
+    expect(map.get('a1')).toBe(a._children![0]);
   });
 });
 
