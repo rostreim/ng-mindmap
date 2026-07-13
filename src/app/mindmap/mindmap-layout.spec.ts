@@ -1,5 +1,6 @@
-import { D3Link, D3Node, MindmapNode } from './mindmap.model';
+import { D3Link, D3Node, MindmapNode, MindmapGraph } from './mindmap.model';
 import {
+  buildGraph,
   buildTree,
   computeRadialPositions,
   firstChild,
@@ -28,6 +29,114 @@ const sampleData: MindmapNode = {
     { id: 'b', label: 'B' },
   ],
 };
+
+const sampleGraph: MindmapGraph = {
+  nodes: [
+    { id: 'root', label: 'Root' },
+    { id: 'a', label: 'A' },
+    { id: 'a1', label: 'A1' },
+    { id: 'a2', label: 'A2' },
+    { id: 'b', label: 'B' },
+  ],
+  edges: [
+    { source: 'root', target: 'a' },
+    { source: 'a', target: 'a1' },
+    { source: 'a', target: 'a2' },
+    { source: 'root', target: 'b' },
+  ],
+};
+
+describe('buildGraph', () => {
+  it('builds D3GraphNode/D3GraphEdge arrays with resolved object references', () => {
+    const { nodes, edges } = buildGraph(sampleGraph);
+
+    expect(nodes.map((n) => n.id).sort()).toEqual(['a', 'a1', 'a2', 'b', 'root']);
+    expect(edges).toHaveLength(4);
+
+    const rootToA = edges.find((e) => e.id === 'root->a')!;
+    expect(rootToA.source.id).toBe('root');
+    expect(rootToA.target.id).toBe('a');
+    // source/target are the *same* object instances as in `nodes`, not copies.
+    expect(rootToA.source).toBe(nodes.find((n) => n.id === 'root'));
+  });
+
+  it('defaults collapsed to false and depth to undefined for every node', () => {
+    const { nodes } = buildGraph(sampleGraph);
+    for (const n of nodes) {
+      expect(n.collapsed).toBe(false);
+      expect(n.depth).toBeUndefined();
+    }
+  });
+
+  it('defaults an edge id to `${source}->${target}` when not given', () => {
+    const { edges } = buildGraph(sampleGraph);
+    expect(edges.map((e) => e.id).sort()).toEqual(['a->a1', 'a->a2', 'root->a', 'root->b']);
+  });
+
+  it('uses an explicit edge id when given', () => {
+    const graph: MindmapGraph = {
+      nodes: [{ id: 'x', label: 'X' }, { id: 'y', label: 'Y' }],
+      edges: [{ id: 'custom-edge', source: 'x', target: 'y' }],
+    };
+    const { edges } = buildGraph(graph);
+    expect(edges[0].id).toBe('custom-edge');
+  });
+
+  it('throws a clear error when an edge references an unknown node id', () => {
+    const graph: MindmapGraph = {
+      nodes: [{ id: 'x', label: 'X' }],
+      edges: [{ source: 'x', target: 'missing' }],
+    };
+    expect(() => buildGraph(graph)).toThrow(/unknown node id "missing"/i);
+  });
+
+  it('throws a clear error on a duplicate node id', () => {
+    const graph: MindmapGraph = {
+      nodes: [{ id: 'x', label: 'X' }, { id: 'x', label: 'X again' }],
+      edges: [],
+    };
+    expect(() => buildGraph(graph)).toThrow(/duplicate node id "x"/i);
+  });
+
+  it('throws a clear error on a self-loop edge', () => {
+    const graph: MindmapGraph = {
+      nodes: [{ id: 'x', label: 'X' }],
+      edges: [{ source: 'x', target: 'x' }],
+    };
+    expect(() => buildGraph(graph)).toThrow(/self-loop/i);
+  });
+
+  it('silently dedupes a duplicate edge (same source+target, no explicit id)', () => {
+    const graph: MindmapGraph = {
+      nodes: [{ id: 'x', label: 'X' }, { id: 'y', label: 'Y' }],
+      edges: [{ source: 'x', target: 'y' }, { source: 'x', target: 'y' }],
+    };
+    const { edges } = buildGraph(graph);
+    expect(edges).toHaveLength(1);
+  });
+
+  it('reuses x/y from a previous D3GraphNode with the same id via previousById', () => {
+    const first = buildGraph(sampleGraph);
+    const a = first.nodes.find((n) => n.id === 'a')!;
+    a.x = 111;
+    a.y = 222;
+
+    const previousById = new Map(first.nodes.map((n) => [n.id, n]));
+    const second = buildGraph(sampleGraph, previousById);
+
+    const secondA = second.nodes.find((n) => n.id === 'a')!;
+    expect(secondA.x).toBe(111);
+    expect(secondA.y).toBe(222);
+  });
+
+  it('assigns a fresh random position (unchanged spawn range) to a node absent from previousById', () => {
+    const { nodes } = buildGraph(sampleGraph, new Map());
+    for (const n of nodes) {
+      expect(n.x).toBeDefined();
+      expect(Math.abs(n.x!)).toBeLessThanOrEqual(30);
+    }
+  });
+});
 
 describe('buildTree', () => {
   it('converts a MindmapNode tree into a D3Node tree, preserving structure and depth', () => {

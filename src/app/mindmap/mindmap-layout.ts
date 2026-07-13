@@ -1,5 +1,5 @@
 import * as d3 from 'd3';
-import { D3Link, D3Node, MindmapNode } from './mindmap.model';
+import { D3GraphEdge, D3GraphNode, D3Link, D3Node, MindmapGraph, MindmapNode } from './mindmap.model';
 
 /** Node radius in px, indexed by depth; last entry repeats for any deeper level. */
 export const NODE_RADII = [18, 12, 8];
@@ -63,6 +63,60 @@ export function flattenAll(node: D3Node, map: Map<string, D3Node>): void {
   map.set(node.id, node);
   (node.children ?? []).forEach((c) => flattenAll(c, map));
   (node._children ?? []).forEach((c) => flattenAll(c, map));
+}
+
+// ── Graph construction ──────────────────────────────────────────────────────
+
+/**
+ * Builds the internal D3GraphNode/D3GraphEdge structures from a MindmapGraph, resolving
+ * string id references into live object references (required for D3's force-link, same
+ * reason D3Link does this for the tree model). Validates structurally before anything else
+ * touches the data — see the three throw sites below — so a bad edge fails clearly and
+ * immediately rather than surfacing as a cryptic D3 or classifyShape() error downstream.
+ */
+export function buildGraph(
+  graph: MindmapGraph,
+  previousById?: Map<string, D3GraphNode>,
+): { nodes: D3GraphNode[]; edges: D3GraphEdge[] } {
+  const nodesById = new Map<string, D3GraphNode>();
+
+  for (const raw of graph.nodes) {
+    if (nodesById.has(raw.id)) {
+      throw new Error(`mindmap: duplicate node id "${raw.id}" — every node id must be unique`);
+    }
+    const previous = previousById?.get(raw.id);
+    nodesById.set(raw.id, {
+      id: raw.id,
+      label: raw.label,
+      collapsed: false,
+      sourceNode: raw,
+      x: previous?.x ?? (Math.random() - 0.5) * 60,
+      y: previous?.y ?? (Math.random() - 0.5) * 60,
+    });
+  }
+
+  const edgesById = new Map<string, D3GraphEdge>();
+
+  for (const raw of graph.edges) {
+    if (raw.source === raw.target) {
+      throw new Error(`mindmap: self-loop edge at node "${raw.source}" is not supported`);
+    }
+    const source = nodesById.get(raw.source);
+    if (!source) {
+      throw new Error(`mindmap: edge references unknown node id "${raw.source}"`);
+    }
+    const target = nodesById.get(raw.target);
+    if (!target) {
+      throw new Error(`mindmap: edge references unknown node id "${raw.target}"`);
+    }
+
+    const id = raw.id ?? `${raw.source}->${raw.target}`;
+    if (edgesById.has(id)) continue; // silent dedup — see mindmap-layout.spec.ts
+
+    edgesById.set(id, { id, source, target });
+  }
+
+  return { nodes: [...nodesById.values()], edges: [...edgesById.values()] };
 }
 
 // ── Tree navigation (keyboard) ──────────────────────────────────────────────
