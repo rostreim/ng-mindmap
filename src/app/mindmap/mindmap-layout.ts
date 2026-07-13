@@ -124,6 +124,19 @@ export function buildGraph(
  * is reachable from exactly one root (the node with zero incoming edges) — so a forest of
  * otherwise tree-shaped disconnected components is 'graph', not 'tree', since there's no
  * single root to hang a radial/hybrid layout or DFS keyboard order off of.
+ *
+ * Cycle detection is a side effect of the checks above, not the DFS below: the multi-parent
+ * check (in-degree > 1 → 'graph') and the unique-root check together already exclude every
+ * *reachable* cycle before the DFS loop runs — re-entering a cycle from the root means the
+ * entry node has two incoming edges (one from the root-ward path, one from within the cycle),
+ * which the multi-parent check catches first. An *unreachable* cycle (disconnected from the
+ * root) is instead caught after the loop by `visited.size === nodes.length`, since none of its
+ * nodes are ever pushed onto `stack`. That leaves the `visited.has(n.id)` check inside the DFS
+ * loop below with nothing left to catch under the current invariants — it is a defensive
+ * fallback, not the primary cycle-detection mechanism. Keep it (and keep the multi-parent and
+ * root-count checks it depends on): removing either of those earlier checks on the theory that
+ * "DFS already handles cycles" would silently reintroduce false-'tree' classifications for
+ * root-reachable cycles.
  */
 export function classifyShape(nodes: D3GraphNode[], edges: D3GraphEdge[]): 'tree' | 'graph' {
   if (nodes.length === 0) return 'tree';
@@ -145,6 +158,8 @@ export function classifyShape(nodes: D3GraphNode[], edges: D3GraphEdge[]): 'tree
   const stack = [roots[0]];
   while (stack.length) {
     const n = stack.pop()!;
+    // Defensive fallback: under the invariants established above (in-degree <= 1 for every
+    // node, exactly one root), this can't currently fire — see the classifyShape() docstring.
     if (visited.has(n.id)) return 'graph'; // cycle
     visited.add(n.id);
     stack.push(...(childrenOf.get(n.id) ?? []));
