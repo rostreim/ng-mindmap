@@ -332,8 +332,12 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .scaleExtent(ZOOM_SCALE_EXTENT)
       .on('zoom', (event) => this.g.attr('transform', event.transform));
 
-    this.svg.call(this.zoomBehavior);
-    this.svg.call(this.zoomBehavior.transform, d3.zoomIdentity.translate(this.width / 2, this.height / 2));
+    // Attached outside the Angular zone so every wheel/pan tick doesn't schedule
+    // a full app-wide change-detection pass — see the constructor for the same pattern.
+    this.zone.runOutsideAngular(() => {
+      this.svg.call(this.zoomBehavior);
+      this.svg.call(this.zoomBehavior.transform, d3.zoomIdentity.translate(this.width / 2, this.height / 2));
+    });
   }
 
   private applyThemeToBackground(): void {
