@@ -348,12 +348,21 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     this.svg.select('defs').select('#mm-glow').remove();
   }
 
+  /**
+   * These D3-driven transitions move the viewport/graph itself (pan, zoom, layout-switch
+   * repositioning) rather than fading a color/opacity, so — unlike the CSS transitions in
+   * mindmap.scss, which already key off the same media query — they're gated here too.
+   */
+  private prefersReducedMotion(): boolean {
+    return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  }
+
   // ── View controls ────────────────────────────────────────────────────────
 
   /** Re-centers the graph at scale 1, undoing any pan/zoom. */
   resetView(): void {
     if (!this.svg) return;
-    this.svg.transition().duration(FIT_TRANSITION_MS)
+    this.svg.transition().duration(this.prefersReducedMotion() ? 0 : FIT_TRANSITION_MS)
       .call(this.zoomBehavior.transform, d3.zoomIdentity.translate(this.width / 2, this.height / 2));
   }
 
@@ -381,7 +390,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .scale(scale)
       .translate(-cx, -cy);
 
-    this.svg.transition().duration(FIT_TRANSITION_MS)
+    this.svg.transition().duration(this.prefersReducedMotion() ? 0 : FIT_TRANSITION_MS)
       .call(this.zoomBehavior.transform, transform);
   }
 
@@ -393,7 +402,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
    */
   private zoomToFitAfterSettle(): void {
     if (this.layoutMode === 'radial') {
-      setTimeout(() => this.zoomToFit(), RADIAL_TRANSITION_MS);
+      setTimeout(() => this.zoomToFit(), this.prefersReducedMotion() ? 0 : RADIAL_TRANSITION_MS);
       return;
     }
     this.simulation?.on('end.layoutSwitch', () => {
@@ -691,12 +700,14 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     this.updateEdges(links);
     this.updateNodes(nodes);
 
+    const duration = this.prefersReducedMotion() ? 0 : RADIAL_TRANSITION_MS;
+
     this.g.select<SVGGElement>('.nodes').selectAll<SVGGElement, D3Node>('g.node')
-      .transition().duration(RADIAL_TRANSITION_MS)
+      .transition().duration(duration)
       .attr('transform', (d) => `translate(${d.x},${d.y})`);
 
     this.g.select<SVGGElement>('.links').selectAll<SVGLineElement, D3Link>('line')
-      .transition().duration(RADIAL_TRANSITION_MS)
+      .transition().duration(duration)
       .attr('x1', (d) => d.source.x!)
       .attr('y1', (d) => d.source.y!)
       .attr('x2', (d) => d.target.x!)
