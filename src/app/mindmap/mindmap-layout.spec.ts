@@ -1,9 +1,12 @@
-import { MindmapGraph } from './mindmap.model';
+import { D3GraphNode, MindmapGraph } from './mindmap.model';
 import {
   buildGraph,
   classifyShape,
+  computeRadialPositions,
   computeVisibleGraph,
   cycleOutgoingEdge,
+  NODE_RADII,
+  nodeRadius,
   resolveEntryNode,
 } from './mindmap-layout';
 
@@ -325,6 +328,60 @@ describe('resolveEntryNode', () => {
   it('returns null for an empty graph', () => {
     const { nodes, edges } = buildGraph({ nodes: [], edges: [] });
     expect(resolveEntryNode(nodes, edges)).toBeNull();
+  });
+});
+
+describe('nodeRadius', () => {
+  it('returns NODE_RADII[depth] for a node with a defined depth', () => {
+    const node = { depth: 2 } as D3GraphNode;
+    expect(nodeRadius(node)).toBe(NODE_RADII[2]);
+  });
+
+  it('returns NODE_RADII[0] for a node with an undefined depth', () => {
+    const node = { depth: undefined } as D3GraphNode;
+    expect(nodeRadius(node)).toBe(NODE_RADII[0]);
+  });
+
+  it('clamps to the last NODE_RADII entry for a depth deeper than the table', () => {
+    const node = { depth: 99 } as D3GraphNode;
+    expect(nodeRadius(node)).toBe(NODE_RADII[NODE_RADII.length - 1]);
+  });
+});
+
+describe('computeRadialPositions', () => {
+  it('places a lone root at the origin without dividing by zero', () => {
+    const { nodes, edges } = buildGraph({ nodes: [{ id: 'solo', label: 'Solo' }], edges: [] });
+    computeRadialPositions(nodes[0], nodes, edges);
+    expect(nodes[0].targetX).toBeCloseTo(0);
+    expect(nodes[0].targetY).toBeCloseTo(0);
+  });
+
+  it('places nodes at increasing radius by depth, with distinct angles for siblings', () => {
+    const { nodes, edges } = buildGraph(sampleGraph);
+    const root = nodes.find((n) => n.id === 'root')!;
+    computeRadialPositions(root, nodes, edges);
+
+    const dist = (n: D3GraphNode) => Math.sqrt(n.targetX! ** 2 + n.targetY! ** 2);
+    const a = nodes.find((n) => n.id === 'a')!;
+    const b = nodes.find((n) => n.id === 'b')!;
+    const a1 = nodes.find((n) => n.id === 'a1')!;
+
+    expect(dist(root)).toBeCloseTo(0);
+    expect(dist(a)).toBeGreaterThan(0);
+    expect(dist(a)).toBeCloseTo(dist(b), 5);
+    expect(dist(a1)).toBeGreaterThan(dist(a));
+  });
+
+  it('only positions the nodes passed in visibleNodes', () => {
+    const { nodes, edges } = buildGraph(sampleGraph);
+    const root = nodes.find((n) => n.id === 'root')!;
+    const a = nodes.find((n) => n.id === 'a')!;
+    const b = nodes.find((n) => n.id === 'b')!;
+    const visibleEdges = edges.filter((e) => e.source.id !== 'a'); // drop a->a1, a->a2, as if 'a' were collapsed
+    computeRadialPositions(root, [root, a, b], visibleEdges); // a1/a2 excluded
+
+    const a1 = nodes.find((n) => n.id === 'a1')!;
+    expect(a1.targetX).toBeUndefined();
   });
 });
 

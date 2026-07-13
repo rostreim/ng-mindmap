@@ -1,3 +1,4 @@
+import * as d3 from 'd3';
 import { D3GraphEdge, D3GraphNode, MindmapGraph } from './mindmap.model';
 
 /** Node radius in px, indexed by depth; last entry repeats for any deeper level. */
@@ -260,8 +261,40 @@ export function cycleOutgoingEdge(
 }
 
 // Tree navigation (nextVisible/previousVisible/firstVisible/lastVisible/firstChild/
-// isDescendantOf/nodeRadius) and radial layout (computeRadialPositions) were removed here
-// in Task 7 along with D3Node — all were typed against the deleted tree-only D3Node and had
-// no D3GraphNode equivalent yet. nodeRadius/computeRadialPositions are rebuilt against
-// D3GraphNode/D3GraphEdge in Task 12; the DFS tree-walk helpers are ported onto the flat
-// visibleNodes array directly in Task 10 (see mindmap.ts's onNodeKeydown()).
+// isDescendantOf) was removed here in Task 7 along with D3Node — it was typed against the
+// deleted tree-only D3Node and had no D3GraphNode equivalent yet. The DFS tree-walk helpers
+// are ported onto the flat visibleNodes array directly in Task 10 (see mindmap.ts's
+// onNodeKeydown()). nodeRadius/computeRadialPositions are rebuilt against D3GraphNode/
+// D3GraphEdge below, in Task 12.
+
+/** Node radius in px, indexed by depth (undefined for graph-shaped data, treated as depth 0); last NODE_RADII entry repeats for any deeper level. */
+export function nodeRadius(d: D3GraphNode): number {
+  return NODE_RADII[Math.min(d.depth ?? 0, NODE_RADII.length - 1)];
+}
+
+/**
+ * Computes deterministic radial-tree target positions for `visibleNodes` (a subset of the
+ * full node set, e.g. with a collapsed subtree excluded), rooted at `root`. Builds a d3
+ * hierarchy from `visibleEdges` rather than walking a nested `.children` (D3GraphNode is
+ * flat — see mindmap.model.ts) — same d3-hierarchy/d3-tree math as before, just fed an
+ * adjacency function instead of a property accessor.
+ */
+export function computeRadialPositions(root: D3GraphNode, visibleNodes: D3GraphNode[], visibleEdges: D3GraphEdge[]): void {
+  const visibleIds = new Set(visibleNodes.map((n) => n.id));
+  const childrenById = new Map<string, D3GraphNode[]>();
+  for (const e of visibleEdges) {
+    childrenById.set(e.source.id, [...(childrenById.get(e.source.id) ?? []), e.target]);
+  }
+
+  const hierarchyRoot = d3.hierarchy(root, (n) => childrenById.get(n.id) ?? []);
+  const maxRadius = hierarchyRoot.height * RADIAL_RING_SPACING;
+  const layout = d3.tree<D3GraphNode>().size([2 * Math.PI, maxRadius]);
+
+  layout(hierarchyRoot).each((node) => {
+    if (!visibleIds.has(node.data.id)) return;
+    const angle = node.x - Math.PI / 2;
+    const radius = node.y;
+    node.data.targetX = radius * Math.cos(angle);
+    node.data.targetY = radius * Math.sin(angle);
+  });
+}
