@@ -33,6 +33,20 @@ test('collapsing/expanding a node announces it via the aria-live region', async 
   await expect(liveRegion).toHaveText('DevOps expanded');
 });
 
+test('clicking a leaf node whose nodeClickFn intercepts the click announces activation, not collapse', async ({ page }) => {
+  const liveRegion = page.locator('[aria-live="polite"]');
+  // 'PostgreSQL' is a leaf under 'Data'; app.ts's nodeClickFn selects leaves and
+  // returns true, suppressing the default collapse/expand toggle.
+  const postgres = page.locator('g.node', { hasText: 'PostgreSQL' });
+
+  // force: true — the force simulation can settle this leaf anywhere, including under the
+  // fixed toolbar; this test only cares that the click fires and its result propagates.
+  await postgres.click({ force: true });
+
+  await expect(liveRegion).toHaveText('PostgreSQL activated');
+  await expect(page.locator('g.node')).toHaveCount(FULL_GRAPH_NODE_COUNT);
+});
+
 test('keyboard arrow navigation moves the roving tabindex/focus to the next visible node', async ({ page }) => {
   const household = page.locator('g.node', { hasText: 'Household' });
   await household.focus();

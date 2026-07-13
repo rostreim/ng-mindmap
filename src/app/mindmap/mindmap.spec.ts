@@ -110,6 +110,34 @@ describe('MindmapComponent', () => {
     });
   });
 
+  describe('onNodeKeydown (Enter/Space) and nodeClickFn interception', () => {
+    it('announces activation and does not toggle when nodeClickFn returns true', () => {
+      const tree: D3Node = buildTree(sampleData, null, 0);
+      (component as any).rootNode = tree;
+      const a1 = tree.children![0].children![0];
+      fixture.componentRef.setInput('nodeClickFn', () => true);
+
+      const event = { key: 'Enter', preventDefault: () => {} } as unknown as KeyboardEvent;
+      (component as any).onNodeKeydown(event, a1);
+
+      expect(component.liveMessage()).toBe('A1 activated');
+    });
+
+    it('falls through to the normal collapse/expand toggle when nodeClickFn returns false', () => {
+      vi.spyOn(component as any, 'redraw').mockImplementation(() => {});
+      const tree: D3Node = buildTree(sampleData, null, 0);
+      (component as any).rootNode = tree;
+      const a = tree.children![0];
+      fixture.componentRef.setInput('nodeClickFn', () => false);
+
+      const event = { key: 'Enter', preventDefault: () => {} } as unknown as KeyboardEvent;
+      (component as any).onNodeKeydown(event, a);
+
+      expect(a.collapsed).toBe(true);
+      expect(component.liveMessage()).toBe('A collapsed');
+    });
+  });
+
   describe('render (data updates)', () => {
     beforeEach(() => {
       vi.spyOn(component as any, 'redraw').mockImplementation(() => {});

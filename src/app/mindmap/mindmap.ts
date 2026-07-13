@@ -128,7 +128,12 @@ export class MindmapComponent implements OnInit, OnDestroy {
   readonly menuEntries = signal<MenuEntry[]>([]);
   private menuOpenerNodeId: string | null = null;
 
-  /** Bound to an aria-live region in the template; announces expand/collapse to screen readers. */
+  /**
+   * Bound to an aria-live region in the template. Announces expand/collapse
+   * (toggleCollapse()) and node activation — when nodeClickFn() intercepts a
+   * click/Enter/Space and suppresses the default toggle, e.g. a consumer treating a
+   * leaf click as "select this node" — to screen readers.
+   */
   readonly liveMessage = signal('');
 
   onContextMenuClosed(reason: ContextMenuCloseReason): void {
@@ -375,7 +380,10 @@ export class MindmapComponent implements OnInit, OnDestroy {
       case 'Enter':
       case ' ': {
         event.preventDefault();
-        if (this.nodeClickFn()?.(d.sourceNode) === true) return;
+        if (this.nodeClickFn()?.(d.sourceNode) === true) {
+          this.liveMessage.set(`${d.label} activated`);
+          return;
+        }
         this.toggleCollapse(d);
         break;
       }
@@ -632,7 +640,10 @@ export class MindmapComponent implements OnInit, OnDestroy {
       .attr('class', 'node')
       .call(this.dragBehavior())
       .on('click', (_event, d) => this.zone.run(() => {
-        if (this.nodeClickFn()?.(d.sourceNode) === true) return;
+        if (this.nodeClickFn()?.(d.sourceNode) === true) {
+          this.liveMessage.set(`${d.label} activated`);
+          return;
+        }
         this.toggleCollapse(d);
       }))
       .on('contextmenu', (event: MouseEvent, d: D3Node) => {

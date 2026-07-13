@@ -39,7 +39,7 @@ MindmapNode (input tree)
 - **`redraw()`** — called after every collapse/expand, theme change, or `layoutMode` change; re-flattens visible nodes and dispatches to one of three sync methods based on `layoutMode`.
 - **`syncForceSimulation()` / `syncHybridSimulation()` / `syncRadialLayout()`** — patch the DOM and (where applicable) the D3 force simulation via `join()` rather than tearing down and re-appending everything, so unaffected nodes keep their element identity across a redraw. All three are wrapped in `NgZone.runOutsideAngular()` — see Performance contract below for what that actually buys in this zoneless app.
 - **`computeRadialPositions()`** — pure `d3-hierarchy`/`d3-tree` math (no DOM), used by `'radial'` and `'hybrid'` layout modes to compute deterministic target positions.
-- **`toggleCollapse()`** — swaps `children ↔ _children` on the clicked node, then calls `redraw()`. Also pushes a message onto `liveMessage`, an `aria-live="polite"` signal announcing the expand/collapse to screen readers (bound in `mindmap.html`).
+- **`toggleCollapse()`** — swaps `children ↔ _children` on the clicked node, then calls `redraw()`. Also pushes a message onto `liveMessage`, an `aria-live="polite"` signal bound in `mindmap.html` that announces the new state to screen readers. The click/keydown handlers push their own `liveMessage` when `nodeClickFn()` intercepts instead (node "activated" rather than collapsed/expanded).
 
 ### Layout modes
 
