@@ -1,6 +1,6 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { MindmapComponent } from './mindmap';
-import { D3Node, MenuEntry, MindmapNode } from './mindmap.model';
+import { D3Node, MindmapNode } from './mindmap.model';
 import { buildTree } from './mindmap-layout';
 
 // These tests exercise toggleCollapse/menu-navigation directly without triggering ngOnInit
@@ -85,45 +85,6 @@ describe('MindmapComponent', () => {
       expect(b.collapsed).toBe(false);
       expect(b.children).toEqual([]);
       expect(b._children).toBeNull();
-    });
-  });
-
-  describe('menu navigation index helpers', () => {
-    const entries: MenuEntry[] = [
-      { type: 'topic', label: 'Actions' },
-      { type: 'item', label: 'Expand all', action: () => {} },
-      { type: 'separator' },
-      { type: 'item', label: 'Disabled item', action: () => {}, disabled: true },
-      { type: 'item', label: 'Delete', action: () => {} },
-    ];
-
-    it('isFocusableMenuEntry is true only for enabled items', () => {
-      expect((component as any).isFocusableMenuEntry(entries[0])).toBe(false); // topic
-      expect((component as any).isFocusableMenuEntry(entries[1])).toBe(true); // item
-      expect((component as any).isFocusableMenuEntry(entries[2])).toBe(false); // separator
-      expect((component as any).isFocusableMenuEntry(entries[3])).toBe(false); // disabled item
-      expect((component as any).isFocusableMenuEntry(entries[4])).toBe(true); // item
-    });
-
-    it('nextMenuIndex skips non-focusable entries and wraps around', () => {
-      expect((component as any).nextMenuIndex(entries, 1, 1)).toBe(4); // skips separator + disabled
-      expect((component as any).nextMenuIndex(entries, 4, 1)).toBe(1); // wraps to start, skips topic
-      expect((component as any).nextMenuIndex(entries, 4, -1)).toBe(1); // skips disabled + separator
-      expect((component as any).nextMenuIndex(entries, 1, -1)).toBe(4); // wraps to end
-    });
-
-    it('firstMenuIndex / lastMenuIndex find the first and last focusable entries', () => {
-      expect((component as any).firstMenuIndex(entries)).toBe(1);
-      expect((component as any).lastMenuIndex(entries)).toBe(4);
-    });
-
-    it('falls back to index 0 when no entry is focusable', () => {
-      const allDisabled: MenuEntry[] = [
-        { type: 'topic', label: 'Actions' },
-        { type: 'separator' },
-      ];
-      expect((component as any).firstMenuIndex(allDisabled)).toBe(0);
-      expect((component as any).lastMenuIndex(allDisabled)).toBe(0);
     });
   });
 });

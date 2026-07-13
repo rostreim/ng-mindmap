@@ -1,6 +1,5 @@
 import {
   Component,
-  DestroyRef,
   ElementRef,
   OnDestroy,
   OnInit,
@@ -25,6 +24,7 @@ import {
   nodeRadius,
   previousVisible,
 } from './mindmap-layout';
+import { ContextMenuCloseReason, ContextMenuComponent } from './context-menu';
 
 export type MindmapTheme = 'dark' | 'light';
 export type MindmapLayout = 'force' | 'radial' | 'hybrid';
@@ -95,6 +95,7 @@ const THEMES: Record<MindmapTheme, ThemeConfig> = {
 @Component({
   selector: 'app-mindmap',
   standalone: true,
+  imports: [ContextMenuComponent],
   templateUrl: './mindmap.html',
   styleUrl: './mindmap.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -115,144 +116,26 @@ export class MindmapComponent implements OnInit, OnDestroy {
   @ViewChild('svgContainer', { static: true }) svgRef!: ElementRef<SVGSVGElement>;
 
   // ── Context menu state ────────────────────────────────────────────────────
+  // Rendering/keyboard-nav/focus-management for the menu itself lives in
+  // ContextMenuComponent; MindmapComponent only owns what's specific to the
+  // graph: fetching entries via contextMenuFn(), positioning, and refocusing
+  // the SVG node that opened the menu once it closes.
 
   readonly menuOpen = signal(false);
   readonly menuX = signal(0);
   readonly menuY = signal(0);
   readonly menuEntries = signal<MenuEntry[]>([]);
   private menuOpenerNodeId: string | null = null;
-  readonly menuFocusIndex = signal(0);
-  readonly submenuOpenIndex = signal<number | null>(null);
 
-  @ViewChild('menuRoot') menuRootRef?: ElementRef<HTMLDivElement>;
-
-  // Attached outside the Angular zone (see constructor) so a click/keydown anywhere in the
-  // document doesn't schedule change detection unless the menu is actually open.
-  private readonly onDocumentClick = (): void => {
-    if (this.menuOpen()) this.zone.run(() => this.menuOpen.set(false));
-  };
-
-  private readonly onDocumentKeydown = (event: KeyboardEvent): void => {
-    if (event.key === 'Escape' && this.menuOpen()) {
-      this.zone.run(() => this.menuOpen.set(false));
+  onContextMenuClosed(reason: ContextMenuCloseReason): void {
+    this.menuOpen.set(false);
+    if (reason === 'escape') {
       const opener = this.menuOpenerNodeId
         ? this.visibleNodes.find((n) => n.id === this.menuOpenerNodeId)
         : null;
       if (opener) this.moveFocusTo(opener);
-      this.menuOpenerNodeId = null;
     }
-  };
-
-  onMenuItemClick(event: MouseEvent, entry: MenuEntry & { type: 'item' }): void {
-    event.stopPropagation();
-    if (entry.disabled || entry.children?.length) return;
-    entry.action();
-    this.menuOpen.set(false);
-  }
-
-  isMenuItemActive(index: number, isSubmenu: boolean, parentIndex?: number): boolean {
-    if (isSubmenu) {
-      return this.submenuOpenIndex() === parentIndex && this.menuFocusIndex() === index;
-    }
-    return this.submenuOpenIndex() === null && this.menuFocusIndex() === index;
-  }
-
-  // ── Context menu keyboard navigation ────────────────────────────────────────
-
-  private isFocusableMenuEntry(entry: MenuEntry): boolean {
-    return entry.type === 'item' && !entry.disabled;
-  }
-
-  private nextMenuIndex(entries: MenuEntry[], from: number, direction: 1 | -1): number {
-    const n = entries.length;
-    let i = from;
-    for (let step = 0; step < n; step++) {
-      i = (i + direction + n) % n;
-      if (this.isFocusableMenuEntry(entries[i])) return i;
-    }
-    return from;
-  }
-
-  private firstMenuIndex(entries: MenuEntry[]): number {
-    const i = entries.findIndex((e) => this.isFocusableMenuEntry(e));
-    return i === -1 ? 0 : i;
-  }
-
-  private lastMenuIndex(entries: MenuEntry[]): number {
-    for (let i = entries.length - 1; i >= 0; i--) {
-      if (this.isFocusableMenuEntry(entries[i])) return i;
-    }
-    return 0;
-  }
-
-  private focusActiveMenuItem(): void {
-    // setTimeout (a macrotask), not queueMicrotask: Angular's zone-triggered change detection
-    // runs on the microtask queue, so a microtask here can race ahead of the DOM update that
-    // creates/moves the tabindex="0" item. A macrotask is guaranteed to run after CD settles.
-    setTimeout(() => {
-      this.menuRootRef?.nativeElement.querySelector<HTMLElement>('[tabindex="0"]')?.focus();
-    });
-  }
-
-  onMenuKeydown(event: KeyboardEvent): void {
-    const inSubmenu = this.submenuOpenIndex() !== null;
-    const entries = inSubmenu
-      ? (this.menuEntries()[this.submenuOpenIndex()!] as MenuEntry & { type: 'item' }).children!
-      : this.menuEntries();
-
-    switch (event.key) {
-      case 'ArrowDown':
-        event.preventDefault();
-        this.menuFocusIndex.set(this.nextMenuIndex(entries, this.menuFocusIndex(), 1));
-        break;
-      case 'ArrowUp':
-        event.preventDefault();
-        this.menuFocusIndex.set(this.nextMenuIndex(entries, this.menuFocusIndex(), -1));
-        break;
-      case 'Home':
-        event.preventDefault();
-        this.menuFocusIndex.set(this.firstMenuIndex(entries));
-        break;
-      case 'End':
-        event.preventDefault();
-        this.menuFocusIndex.set(this.lastMenuIndex(entries));
-        break;
-      case 'ArrowRight': {
-        if (inSubmenu) break;
-        const current = entries[this.menuFocusIndex()];
-        if (current?.type === 'item' && current.children?.length) {
-          event.preventDefault();
-          this.submenuOpenIndex.set(this.menuFocusIndex());
-          this.menuFocusIndex.set(this.firstMenuIndex(current.children));
-        }
-        break;
-      }
-      case 'ArrowLeft': {
-        if (inSubmenu) {
-          event.preventDefault();
-          this.menuFocusIndex.set(this.submenuOpenIndex()!);
-          this.submenuOpenIndex.set(null);
-        }
-        break;
-      }
-      case 'Enter':
-      case ' ': {
-        event.preventDefault();
-        const active = entries[this.menuFocusIndex()];
-        if (active?.type === 'item' && !active.disabled) {
-          if (active.children?.length) {
-            this.submenuOpenIndex.set(this.menuFocusIndex());
-            this.menuFocusIndex.set(this.firstMenuIndex(active.children));
-          } else {
-            active.action();
-            this.menuOpen.set(false);
-          }
-        }
-        break;
-      }
-    }
-
-    this.focusActiveMenuItem();
+    this.menuOpenerNodeId = null;
   }
 
   // ── D3 internals ─────────────────────────────────────────────────────────
@@ -275,16 +158,7 @@ export class MindmapComponent implements OnInit, OnDestroy {
   /** Rebuilt once per updateEdges() call so node hover only touches its own incident links, not every link in the graph. */
   private linksByNode = new Map<string, D3Link[]>();
 
-  constructor(private zone: NgZone, private destroyRef: DestroyRef) {
-    this.zone.runOutsideAngular(() => {
-      document.addEventListener('click', this.onDocumentClick);
-      document.addEventListener('keydown', this.onDocumentKeydown);
-    });
-    this.destroyRef.onDestroy(() => {
-      document.removeEventListener('click', this.onDocumentClick);
-      document.removeEventListener('keydown', this.onDocumentKeydown);
-    });
-
+  constructor(private zone: NgZone) {
     // Each effect's first run happens once ngOnInit's own initSvg()/render() have already
     // set up the initial state, so it's skipped here — mirrors the old ngOnChanges'
     // `!changes[...].firstChange` checks, just per-input instead of via a single dispatcher.
@@ -723,11 +597,8 @@ export class MindmapComponent implements OnInit, OnDestroy {
           this.menuX.set(x);
           this.menuY.set(y);
           this.menuOpenerNodeId = d.id;
-          this.submenuOpenIndex.set(null);
-          this.menuFocusIndex.set(this.firstMenuIndex(entries));
           this.menuOpen.set(true);
         });
-        this.focusActiveMenuItem();
       })
       .catch((err) => console.error('mindmap: contextMenuFn rejected, menu not opened', err));
   }
