@@ -117,14 +117,15 @@ describe('MindmapComponent', () => {
       expect(component.liveMessage()).toBe('A expanded');
     });
 
-    it('is a no-op (still toggles collapsed, but redraw shows no visibility change) for a leaf node', () => {
+    it('is a no-op for a leaf node with no outgoing edges', () => {
       (component as any).render();
       const b = (component as any).allNodes.find((n: D3GraphNode) => n.id === 'b');
 
       (component as any).toggleCollapse(b);
-      // A leaf's `collapsed` flag still flips (it's just a boolean on the node), but it has
-      // no outgoing edges, so computeVisibleGraph() shows no visible difference either way.
-      expect(b.collapsed).toBe(true);
+      // A leaf node has no outgoing edges, so toggleCollapse() returns early via its
+      // hasOutgoing guard (line 733) without ever reaching the flag flip on line 735.
+      // Thus collapsed remains at its default false value — a genuine complete no-op.
+      expect(b.collapsed).toBe(false);
     });
 
     describe('collapseMode: global vs per-edge (DAG-only behavior)', () => {
