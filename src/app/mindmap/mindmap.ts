@@ -537,11 +537,14 @@ export class MindmapComponent implements OnInit, OnDestroy {
     const { visibleNodes, visibleEdges } = computeVisibleGraph(this.allNodes, this.allEdges, this.collapseMode());
     this.visibleNodes = visibleNodes;
 
-    if (visibleNodes.length === 0) return;
-
     let effectiveLayoutMode = this.layoutMode();
     if (effectiveLayoutMode !== 'force' && this.shape === 'graph') {
       console.warn(`mindmap: layoutMode "${effectiveLayoutMode}" requires tree-shaped data but the current data is graph-shaped — falling back to "force"`);
+      effectiveLayoutMode = 'force';
+    } else if (effectiveLayoutMode !== 'force' && this.structuralRoot === null) {
+      // Empty graph (or no discoverable structural root) — nothing for computeRadialPositions()
+      // to walk, so fall back to the force path, which safely no-ops on empty arrays and still
+      // clears any stale DOM via updateEdges([])/updateNodes([]).
       effectiveLayoutMode = 'force';
     }
 
