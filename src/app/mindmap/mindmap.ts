@@ -100,6 +100,7 @@ export class MindmapComponent implements OnInit, OnDestroy {
   readonly nodeClickFn = input<NodeClickFn>();
   readonly ariaLabel = input('Mind map');
   readonly layoutMode = input<MindmapLayout>('force');
+  readonly collapseMode = input<'global' | 'per-edge'>('global');
 
   @ViewChild('svgContainer', { static: true }) svgRef!: ElementRef<SVGSVGElement>;
 
@@ -411,7 +412,7 @@ export class MindmapComponent implements OnInit, OnDestroy {
 
   private redraw(): void {
     this.buildColorScale();
-    const { visibleNodes, visibleEdges } = computeVisibleGraph(this.allNodes, this.allEdges, 'global');
+    const { visibleNodes, visibleEdges } = computeVisibleGraph(this.allNodes, this.allEdges, this.collapseMode());
     this.visibleNodes = visibleNodes;
 
     let effectiveLayoutMode = this.layoutMode();
@@ -727,35 +728,16 @@ export class MindmapComponent implements OnInit, OnDestroy {
 
   // ── Collapse / expand ──────────────────────────────────────────────────────
 
-  private toggleCollapse(d: D3Node): void {
-    const hasVisible = d.children && d.children.length > 0;
-    const hasHidden = d._children && d._children.length > 0;
-    if (!hasVisible && !hasHidden) return;
+  private toggleCollapse(d: D3GraphNode): void {
+    const hasOutgoing = this.allEdges.some((e) => e.source.id === d.id);
+    if (!hasOutgoing) return;
 
-    let refocusTarget: D3Node | null = null;
-
-    if (hasVisible) {
-      if (this.focusedNodeId && this.focusedNodeId !== d.id) {
-        const focused = this.visibleNodes.find((n) => n.id === this.focusedNodeId);
-        if (focused && isDescendantOf(focused, d)) {
-          refocusTarget = d;
-        }
-      }
-      d._children = d.children;
-      d.children = [];
-      d.collapsed = true;
-      this.liveMessage.set(`${d.label} collapsed`);
-    } else {
-      d.children = d._children;
-      d._children = null;
-      d.collapsed = false;
-      this.liveMessage.set(`${d.label} expanded`);
-    }
-
+    d.collapsed = !d.collapsed;
+    this.liveMessage.set(`${d.label} ${d.collapsed ? 'collapsed' : 'expanded'}`);
     this.redraw();
 
-    if (refocusTarget) {
-      this.moveFocusTo(refocusTarget);
+    if (this.focusedNodeId && !this.visibleNodes.some((n) => n.id === this.focusedNodeId)) {
+      this.moveFocusTo(d);
     }
   }
 

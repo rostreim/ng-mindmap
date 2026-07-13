@@ -78,4 +78,78 @@ describe('MindmapComponent', () => {
       warnSpy.mockRestore();
     });
   });
+
+  describe('toggleCollapse', () => {
+    const sharedGraph: MindmapGraph = {
+      nodes: [
+        { id: 'p1', label: 'P1' }, { id: 'p2', label: 'P2' },
+        { id: 'shared', label: 'Shared' }, { id: 'shared-child', label: 'Shared Child' },
+      ],
+      edges: [
+        { source: 'p1', target: 'shared' }, { source: 'p2', target: 'shared' },
+        { source: 'shared', target: 'shared-child' },
+      ],
+    };
+
+    beforeEach(() => {
+      vi.spyOn(component as any, 'redraw').mockImplementation(() => {});
+    });
+
+    it('toggles collapsed on the node and calls redraw()', () => {
+      (component as any).render();
+      const a = (component as any).allNodes.find((n: D3GraphNode) => n.id === 'a');
+
+      (component as any).toggleCollapse(a);
+      expect(a.collapsed).toBe(true);
+
+      (component as any).toggleCollapse(a);
+      expect(a.collapsed).toBe(false);
+    });
+
+    it('announces the node label and new state to screen readers', () => {
+      (component as any).render();
+      const a = (component as any).allNodes.find((n: D3GraphNode) => n.id === 'a');
+
+      (component as any).toggleCollapse(a);
+      expect(component.liveMessage()).toBe('A collapsed');
+
+      (component as any).toggleCollapse(a);
+      expect(component.liveMessage()).toBe('A expanded');
+    });
+
+    it('is a no-op (still toggles collapsed, but redraw shows no visibility change) for a leaf node', () => {
+      (component as any).render();
+      const b = (component as any).allNodes.find((n: D3GraphNode) => n.id === 'b');
+
+      (component as any).toggleCollapse(b);
+      // A leaf's `collapsed` flag still flips (it's just a boolean on the node), but it has
+      // no outgoing edges, so computeVisibleGraph() shows no visible difference either way.
+      expect(b.collapsed).toBe(true);
+    });
+
+    describe('collapseMode: global vs per-edge (DAG-only behavior)', () => {
+      it('global mode: collapsing one parent hides the shared node even via the other parent', () => {
+        fixture.componentRef.setInput('data', sharedGraph);
+        fixture.componentRef.setInput('collapseMode', 'global');
+        (component as any).render();
+        const p1 = (component as any).allNodes.find((n: D3GraphNode) => n.id === 'p1');
+
+        (component as any).toggleCollapse(p1);
+
+        expect((component as any).visibleNodes.map((n: D3GraphNode) => n.id).sort()).toEqual(['p1', 'p2']);
+      });
+
+      it('per-edge mode: collapsing one parent keeps the shared node visible via the other parent', () => {
+        fixture.componentRef.setInput('data', sharedGraph);
+        fixture.componentRef.setInput('collapseMode', 'per-edge');
+        (component as any).render();
+        const p1 = (component as any).allNodes.find((n: D3GraphNode) => n.id === 'p1');
+
+        (component as any).toggleCollapse(p1);
+
+        expect((component as any).visibleNodes.map((n: D3GraphNode) => n.id).sort())
+          .toEqual(['p1', 'p2', 'shared', 'shared-child']);
+      });
+    });
+  });
 });
