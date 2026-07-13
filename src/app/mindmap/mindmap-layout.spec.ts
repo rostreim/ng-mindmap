@@ -2,6 +2,7 @@ import { D3Link, D3Node, MindmapNode, MindmapGraph } from './mindmap.model';
 import {
   buildGraph,
   buildTree,
+  classifyShape,
   computeRadialPositions,
   firstChild,
   firstVisible,
@@ -360,5 +361,49 @@ describe('computeRadialPositions', () => {
     const [a1, a2] = a._children!;
     expect(a1.targetX).toBeUndefined();
     expect(a2.targetX).toBeUndefined();
+  });
+});
+
+describe('classifyShape', () => {
+  it('classifies a single-rooted tree as \'tree\'', () => {
+    const { nodes, edges } = buildGraph(sampleGraph);
+    expect(classifyShape(nodes, edges)).toBe('tree');
+  });
+
+  it('classifies a DAG with a two-parent node as \'graph\'', () => {
+    const graph: MindmapGraph = {
+      nodes: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }, { id: 'shared', label: 'Shared' }],
+      edges: [{ source: 'a', target: 'shared' }, { source: 'b', target: 'shared' }],
+    };
+    const { nodes, edges } = buildGraph(graph);
+    expect(classifyShape(nodes, edges)).toBe('graph');
+  });
+
+  it('classifies a cyclic graph as \'graph\'', () => {
+    const graph: MindmapGraph = {
+      nodes: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }],
+      edges: [{ source: 'a', target: 'b' }, { source: 'b', target: 'a' }],
+    };
+    const { nodes, edges } = buildGraph(graph);
+    expect(classifyShape(nodes, edges)).toBe('graph');
+  });
+
+  it('classifies two disconnected trees (a forest) as \'graph\'', () => {
+    const graph: MindmapGraph = {
+      nodes: [{ id: 'a', label: 'A' }, { id: 'a1', label: 'A1' }, { id: 'b', label: 'B' }, { id: 'b1', label: 'B1' }],
+      edges: [{ source: 'a', target: 'a1' }, { source: 'b', target: 'b1' }],
+    };
+    const { nodes, edges } = buildGraph(graph);
+    expect(classifyShape(nodes, edges)).toBe('graph');
+  });
+
+  it('does not crash on an empty graph', () => {
+    const { nodes, edges } = buildGraph({ nodes: [], edges: [] });
+    expect(['tree', 'graph']).toContain(classifyShape(nodes, edges));
+  });
+
+  it('classifies a single node with no edges as \'tree\'', () => {
+    const { nodes, edges } = buildGraph({ nodes: [{ id: 'solo', label: 'Solo' }], edges: [] });
+    expect(classifyShape(nodes, edges)).toBe('tree');
   });
 });

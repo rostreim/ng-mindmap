@@ -119,6 +119,40 @@ export function buildGraph(
   return { nodes: [...nodesById.values()], edges: [...edgesById.values()] };
 }
 
+/**
+ * 'tree' iff every node has at most one incoming edge, there is no cycle, and every node
+ * is reachable from exactly one root (the node with zero incoming edges) — so a forest of
+ * otherwise tree-shaped disconnected components is 'graph', not 'tree', since there's no
+ * single root to hang a radial/hybrid layout or DFS keyboard order off of.
+ */
+export function classifyShape(nodes: D3GraphNode[], edges: D3GraphEdge[]): 'tree' | 'graph' {
+  if (nodes.length === 0) return 'tree';
+
+  const inDegree = new Map<string, number>(nodes.map((n) => [n.id, 0]));
+  const childrenOf = new Map<string, D3GraphNode[]>();
+  for (const e of edges) {
+    inDegree.set(e.target.id, (inDegree.get(e.target.id) ?? 0) + 1);
+    if (inDegree.get(e.target.id)! > 1) return 'graph'; // multi-parent
+    const kids = childrenOf.get(e.source.id) ?? [];
+    kids.push(e.target);
+    childrenOf.set(e.source.id, kids);
+  }
+
+  const roots = nodes.filter((n) => (inDegree.get(n.id) ?? 0) === 0);
+  if (roots.length !== 1) return 'graph'; // no root, or a forest of several
+
+  const visited = new Set<string>();
+  const stack = [roots[0]];
+  while (stack.length) {
+    const n = stack.pop()!;
+    if (visited.has(n.id)) return 'graph'; // cycle
+    visited.add(n.id);
+    stack.push(...(childrenOf.get(n.id) ?? []));
+  }
+
+  return visited.size === nodes.length ? 'tree' : 'graph';
+}
+
 // ── Tree navigation (keyboard) ──────────────────────────────────────────────
 
 export function nextVisible(nodes: D3Node[], id: string): D3Node | null {
