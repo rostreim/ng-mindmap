@@ -4,6 +4,7 @@ import {
   buildTree,
   classifyShape,
   computeRadialPositions,
+  computeVisibleGraph,
   firstChild,
   firstVisible,
   flattenAll,
@@ -405,5 +406,88 @@ describe('classifyShape', () => {
   it('classifies a single node with no edges as \'tree\'', () => {
     const { nodes, edges } = buildGraph({ nodes: [{ id: 'solo', label: 'Solo' }], edges: [] });
     expect(classifyShape(nodes, edges)).toBe('tree');
+  });
+});
+
+describe('computeVisibleGraph', () => {
+  const sharedGraph: MindmapGraph = {
+    nodes: [
+      { id: 'p1', label: 'Parent 1' },
+      { id: 'p2', label: 'Parent 2' },
+      { id: 'shared', label: 'Shared' },
+      { id: 'shared-child', label: 'Shared Child' },
+    ],
+    edges: [
+      { source: 'p1', target: 'shared' },
+      { source: 'p2', target: 'shared' },
+      { source: 'shared', target: 'shared-child' },
+    ],
+  };
+
+  it('shows every node when nothing is collapsed, in either mode', () => {
+    const { nodes, edges } = buildGraph(sharedGraph);
+    for (const mode of ['global', 'per-edge'] as const) {
+      const { visibleNodes } = computeVisibleGraph(nodes, edges, mode);
+      expect(visibleNodes.map((n) => n.id).sort()).toEqual(['p1', 'p2', 'shared', 'shared-child']);
+    }
+  });
+
+  it('global mode: collapsing one parent hides the shared node everywhere, even via the other parent', () => {
+    const { nodes, edges } = buildGraph(sharedGraph);
+    nodes.find((n) => n.id === 'p1')!.collapsed = true;
+
+    const { visibleNodes } = computeVisibleGraph(nodes, edges, 'global');
+    expect(visibleNodes.map((n) => n.id).sort()).toEqual(['p1', 'p2']);
+  });
+
+  it('per-edge mode: collapsing one parent keeps the shared node visible via the other parent', () => {
+    const { nodes, edges } = buildGraph(sharedGraph);
+    nodes.find((n) => n.id === 'p1')!.collapsed = true;
+
+    const { visibleNodes } = computeVisibleGraph(nodes, edges, 'per-edge');
+    expect(visibleNodes.map((n) => n.id).sort()).toEqual(['p1', 'p2', 'shared', 'shared-child']);
+  });
+
+  it('per-edge mode: collapsing both parents hides the shared node', () => {
+    const { nodes, edges } = buildGraph(sharedGraph);
+    nodes.find((n) => n.id === 'p1')!.collapsed = true;
+    nodes.find((n) => n.id === 'p2')!.collapsed = true;
+
+    const { visibleNodes } = computeVisibleGraph(nodes, edges, 'per-edge');
+    expect(visibleNodes.map((n) => n.id).sort()).toEqual(['p1', 'p2']);
+  });
+
+  it('a visible edge always has both endpoints visible', () => {
+    const { nodes, edges } = buildGraph(sharedGraph);
+    nodes.find((n) => n.id === 'p1')!.collapsed = true;
+
+    const { visibleNodes, visibleEdges } = computeVisibleGraph(nodes, edges, 'global');
+    const visibleIds = new Set(visibleNodes.map((n) => n.id));
+    for (const e of visibleEdges) {
+      expect(visibleIds.has(e.source.id)).toBe(true);
+      expect(visibleIds.has(e.target.id)).toBe(true);
+    }
+  });
+
+  it('renders a fully cyclic component with no zero-indegree node (seeds from one arbitrary node)', () => {
+    const graph: MindmapGraph = {
+      nodes: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }, { id: 'c', label: 'C' }],
+      edges: [{ source: 'a', target: 'b' }, { source: 'b', target: 'c' }, { source: 'c', target: 'a' }],
+    };
+    const { nodes, edges } = buildGraph(graph);
+    const { visibleNodes } = computeVisibleGraph(nodes, edges, 'global');
+    expect(visibleNodes.map((n) => n.id).sort()).toEqual(['a', 'b', 'c']);
+  });
+
+  it('renders two disconnected components independently', () => {
+    const graph: MindmapGraph = {
+      nodes: [{ id: 'a', label: 'A' }, { id: 'a1', label: 'A1' }, { id: 'b', label: 'B' }, { id: 'b1', label: 'B1' }],
+      edges: [{ source: 'a', target: 'a1' }, { source: 'b', target: 'b1' }],
+    };
+    const { nodes, edges } = buildGraph(graph);
+    nodes.find((n) => n.id === 'a')!.collapsed = true;
+
+    const { visibleNodes } = computeVisibleGraph(nodes, edges, 'global');
+    expect(visibleNodes.map((n) => n.id).sort()).toEqual(['a', 'b', 'b1']);
   });
 });

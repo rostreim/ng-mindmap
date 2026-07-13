@@ -168,6 +168,94 @@ export function classifyShape(nodes: D3GraphNode[], edges: D3GraphEdge[]): 'tree
   return visited.size === nodes.length ? 'tree' : 'graph';
 }
 
+/**
+ * Seeds the visibility walk from every zero-indegree node (one seed per disconnected
+ * component's natural root), then adds one arbitrary unreached node per still-unreached
+ * component as an extra seed — covers a fully cyclic component with no "outside-in" edge
+ * at all, so a self-contained cycle still renders instead of being permanently invisible.
+ */
+function findVisibilitySeeds(nodes: D3GraphNode[], edges: D3GraphEdge[]): D3GraphNode[] {
+  const inDegree = new Map<string, number>(nodes.map((n) => [n.id, 0]));
+  for (const e of edges) inDegree.set(e.target.id, (inDegree.get(e.target.id) ?? 0) + 1);
+
+  const seeds = nodes.filter((n) => (inDegree.get(n.id) ?? 0) === 0);
+  const reached = new Set<string>();
+  const outgoing = new Map<string, D3GraphNode[]>();
+  for (const e of edges) outgoing.set(e.source.id, [...(outgoing.get(e.source.id) ?? []), e.target]);
+
+  const walk = (start: D3GraphNode) => {
+    const stack = [start];
+    while (stack.length) {
+      const n = stack.pop()!;
+      if (reached.has(n.id)) continue;
+      reached.add(n.id);
+      stack.push(...(outgoing.get(n.id) ?? []));
+    }
+  };
+  seeds.forEach(walk);
+
+  for (const n of nodes) {
+    if (!reached.has(n.id)) {
+      seeds.push(n);
+      walk(n);
+    }
+  }
+  return seeds;
+}
+
+/**
+ * Two-phase, not two independent branches. Phase 1 is one forward walk from the seeds —
+ * identical for both modes — that already gives 'per-edge' semantics: a node is visible if
+ * reachable via any path that never passes through a collapsed node (so a shared node stays
+ * visible via a non-collapsed parent even while another parent is collapsed). Phase 2 runs
+ * only for 'global' mode: a pruning pass that removes anything downstream of a collapsed
+ * node *unconditionally*, even if some other path also reaches it — this is what makes
+ * collapsing one parent hide a shared descendant everywhere, the behavior 'per-edge' must
+ * NOT have. Both phases are O(V+E); fully recomputed each call, no incremental patching,
+ * same philosophy as the old flattenVisible().
+ */
+export function computeVisibleGraph(
+  nodes: D3GraphNode[],
+  edges: D3GraphEdge[],
+  collapseMode: 'global' | 'per-edge',
+): { visibleNodes: D3GraphNode[]; visibleEdges: D3GraphEdge[] } {
+  const outgoing = new Map<string, D3GraphEdge[]>();
+  for (const e of edges) outgoing.set(e.source.id, [...(outgoing.get(e.source.id) ?? []), e]);
+  const seeds = findVisibilitySeeds(nodes, edges);
+  const seedIds = new Set(seeds.map((s) => s.id));
+
+  // Phase 1: forward walk, stopping at (but including) any collapsed node.
+  const visible = new Set<string>();
+  const stack = [...seeds];
+  while (stack.length) {
+    const n = stack.pop()!;
+    if (visible.has(n.id)) continue;
+    visible.add(n.id);
+    if (n.collapsed) continue; // never descend past a collapsed node, in either mode
+    for (const e of outgoing.get(n.id) ?? []) stack.push(e.target);
+  }
+
+  // Phase 2 ('global' only): unconditionally prune everything downstream of a collapsed
+  // node, even if another path also reaches it.
+  if (collapseMode === 'global') {
+    const collapsedIds = new Set(nodes.filter((n) => n.collapsed).map((n) => n.id));
+    for (const collapsedId of collapsedIds) {
+      const substack = [...(outgoing.get(collapsedId) ?? []).map((e) => e.target)];
+      while (substack.length) {
+        const n = substack.pop()!;
+        if (!visible.has(n.id)) continue; // already excluded
+        if (seedIds.has(n.id)) continue; // a seed is never hidden
+        visible.delete(n.id);
+        for (const e of outgoing.get(n.id) ?? []) substack.push(e.target);
+      }
+    }
+  }
+
+  const visibleNodes = nodes.filter((n) => visible.has(n.id));
+  const visibleEdges = edges.filter((e) => visible.has(e.source.id) && visible.has(e.target.id));
+  return { visibleNodes, visibleEdges };
+}
+
 // ── Tree navigation (keyboard) ──────────────────────────────────────────────
 
 export function nextVisible(nodes: D3Node[], id: string): D3Node | null {
