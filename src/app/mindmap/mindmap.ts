@@ -215,7 +215,6 @@ export class MindmapComponent implements OnInit, OnDestroy {
     this.svg = d3.select(this.svgRef.nativeElement)
       .attr('width', this.width())
       .attr('height', this.height())
-      .attr('role', 'tree')
       .attr('aria-label', this.ariaLabel());
 
     this.svg.append('rect')
@@ -417,12 +416,14 @@ export class MindmapComponent implements OnInit, OnDestroy {
         event.preventDefault();
         const { index } = cycleOutgoingEdge(d, this.allEdges, this.outgoingCursor.get(d.id) ?? 0, 1);
         this.outgoingCursor.set(d.id, index);
+        this.highlightOutgoingCursor(d);
         break;
       }
       case 'ArrowUp': {
         event.preventDefault();
         const { index } = cycleOutgoingEdge(d, this.allEdges, this.outgoingCursor.get(d.id) ?? 0, -1);
         this.outgoingCursor.set(d.id, index);
+        this.highlightOutgoingCursor(d);
         break;
       }
       case 'ArrowRight': {
@@ -476,6 +477,16 @@ export class MindmapComponent implements OnInit, OnDestroy {
     }
   }
 
+  /** Visual affordance for the graph-mode outgoing-edge keyboard cursor — reuses the hover incident-edge styling. */
+  private highlightOutgoingCursor(node: D3GraphNode): void {
+    const { edge } = cycleOutgoingEdge(node, this.allEdges, (this.outgoingCursor.get(node.id) ?? 0) - 1, 1);
+    this.g.select('.links').selectAll<SVGLineElement, D3GraphEdge>('line')
+      .transition().duration(HOVER_TRANSITION_MS)
+      .attr('stroke-opacity', (link) => (link.id === edge?.id ? 1 : 0.15))
+      .attr('stroke-width', (link) => (link.id === edge?.id ? 2 : 1.5))
+      .attr('stroke', (link) => (link.id === edge?.id ? this.colorScale(0) : this.tc.edgeStroke));
+  }
+
   // ── Render / re-render ─────────────────────────────────────────────────────
 
   private render(): void {
@@ -488,11 +499,28 @@ export class MindmapComponent implements OnInit, OnDestroy {
     this.outgoingCursor.clear();
     this.arrivedVia.clear();
     this.focusedNodeId = this.entryNode?.id ?? null;
+
+    if (this.shape === 'tree' && this.entryNode) {
+      const depthById = new Map<string, number>([[this.entryNode.id, 0]]);
+      const stack = [this.entryNode];
+      while (stack.length) {
+        const n = stack.pop()!;
+        for (const e of this.allEdges.filter((edge) => edge.source.id === n.id)) {
+          depthById.set(e.target.id, (depthById.get(n.id) ?? 0) + 1);
+          stack.push(e.target);
+        }
+      }
+      for (const n of this.allNodes) n.depth = depthById.get(n.id);
+    } else {
+      for (const n of this.allNodes) n.depth = undefined;
+    }
+
     this.redraw();
   }
 
   private redraw(): void {
     this.buildColorScale();
+    this.svg.attr('role', this.shape === 'tree' ? 'tree' : 'application');
     const { visibleNodes, visibleEdges } = computeVisibleGraph(this.allNodes, this.allEdges, this.collapseMode());
     this.visibleNodes = visibleNodes;
 
@@ -780,18 +808,33 @@ export class MindmapComponent implements OnInit, OnDestroy {
       .attr('opacity', (d) => (d._children && d._children.length ? 1 : 0));
   }
 
-  /** ARIA treeitem semantics — role/level/expanded/setsize/posinset. Flat DOM (see design doc). */
-  private applyNodeAria(selection: d3.Selection<SVGGElement, D3Node, SVGGElement, unknown>): void {
-    selection
-      .attr('role', 'treeitem')
-      .attr('aria-label', (d) => d.label)
-      .attr('aria-level', (d) => d.depth + 1)
-      .attr('aria-setsize', (d) => (d.parent ? (d.parent.children?.length ?? 1) : 1))
-      .attr('aria-posinset', (d) => (d.parent ? (d.parent.children?.indexOf(d) ?? 0) + 1 : 1))
-      .attr('aria-expanded', (d) => {
-        const hasChildren = !!(d.children?.length || d._children?.length);
-        return hasChildren ? String(!!d.children?.length) : null;
-      });
+  /** ARIA semantics — treeitem (tree-shaped) or button (graph-shaped). Flat DOM (see design doc). */
+  private applyNodeAria(selection: d3.Selection<SVGGElement, D3GraphNode, SVGGElement, unknown>): void {
+    const hasOutgoing = (d: D3GraphNode) => this.allEdges.some((e) => e.source.id === d.id);
+
+    if (this.shape === 'tree') {
+      selection
+        .attr('role', 'treeitem')
+        .attr('aria-label', (d) => d.label)
+        .attr('aria-level', (d) => (d.depth ?? 0) + 1)
+        .attr('aria-setsize', (d) => {
+          const parentEdge = this.allEdges.find((e) => e.target.id === d.id);
+          if (!parentEdge) return 1;
+          return this.allEdges.filter((e) => e.source.id === parentEdge.source.id).length;
+        })
+        .attr('aria-posinset', (d) => {
+          const parentEdge = this.allEdges.find((e) => e.target.id === d.id);
+          if (!parentEdge) return 1;
+          const siblings = this.allEdges.filter((e) => e.source.id === parentEdge.source.id).map((e) => e.target.id);
+          return siblings.indexOf(d.id) + 1;
+        })
+        .attr('aria-expanded', (d) => (hasOutgoing(d) ? String(!d.collapsed) : null));
+    } else {
+      selection
+        .attr('role', 'button')
+        .attr('aria-label', (d) => d.label)
+        .attr('aria-expanded', (d) => (hasOutgoing(d) ? String(!d.collapsed) : null));
+    }
   }
 
   // ── Tick ───────────────────────────────────────────────────────────────────
