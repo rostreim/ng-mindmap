@@ -11,8 +11,11 @@ npm start          # dev server at http://localhost:4200 (use --port N if 4200 i
 npm run build      # production build → dist/mindmap-app/
 npm run watch      # dev build in watch mode (no server)
 npm test           # Vitest unit tests (via @angular/build:unit-test, jsdom environment)
-npx tsc --noEmit   # type-check without emitting
+npm run e2e        # Playwright tests in a real Chromium (drag, zoom, keyboard nav — what jsdom can't do)
+npx tsc -b --noEmit  # type-check without emitting
 ```
+
+`npx tsc --noEmit` (without `-b`) is a **silent no-op** in this project: the root `tsconfig.json` has `"files": []` and only `"references"` (the standard Angular CLI multi-project layout — `tsconfig.app.json`/`tsconfig.spec.json` hold the real `include`s), and plain non-build-mode `tsc` doesn't follow `references`. It exits 0 with zero files checked regardless of actual errors. Always use `-b` (build mode, follows references) to actually type-check.
 
 ## Architecture
 

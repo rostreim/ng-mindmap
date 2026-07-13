@@ -1,19 +1,30 @@
 import {
   Component,
-  DestroyRef,
   ElementRef,
-  Input,
-  OnChanges,
   OnDestroy,
   OnInit,
-  SimpleChanges,
   ViewChild,
   ChangeDetectionStrategy,
   NgZone,
+  effect,
+  input,
   signal,
 } from '@angular/core';
 import * as d3 from 'd3';
 import { MindmapNode, D3Node, D3Link, MenuEntry, ContextMenuFn, NodeClickFn } from './mindmap.model';
+import {
+  buildTree,
+  computeRadialPositions,
+  firstChild,
+  firstVisible,
+  flattenVisible,
+  isDescendantOf,
+  lastVisible,
+  nextVisible,
+  nodeRadius,
+  previousVisible,
+} from './mindmap-layout';
+import { ContextMenuCloseReason, ContextMenuComponent } from './context-menu';
 
 export type MindmapTheme = 'dark' | 'light';
 export type MindmapLayout = 'force' | 'radial' | 'hybrid';
@@ -41,18 +52,16 @@ const REDRAW_ALPHA = 0.3;
 
 const ZOOM_SCALE_EXTENT: [number, number] = [0.1, 5];
 
-/** Node radius in px, indexed by depth; last entry repeats for any deeper level. */
-const NODE_RADII = [18, 12, 8];
-
 /** Minimum pointer travel (px) before a drag suppresses the following click, so a small drag doesn't also toggle collapse. */
 const DRAG_CLICK_DISTANCE = 4;
+
+/** Duration (ms) of the edge highlight transition on node hover/unhover. */
+const HOVER_TRANSITION_MS = 150;
 
 /** Empty margin (px) kept around the graph's bounding box by zoomToFit(). */
 const FIT_PADDING = 60;
 const FIT_TRANSITION_MS = 400;
 
-/** Radial distance (px) between consecutive depth rings in 'radial'/'hybrid' layout mode. */
-const RADIAL_RING_SPACING = 100;
 /** Duration (ms) of the position transition when 'radial' mode redraws (no simulation to smooth it otherwise). */
 const RADIAL_TRANSITION_MS = 400;
 /** Pull strength (0-1) of 'hybrid' mode's forceX/forceY toward each node's computed radial target. */
@@ -86,164 +95,47 @@ const THEMES: Record<MindmapTheme, ThemeConfig> = {
 @Component({
   selector: 'app-mindmap',
   standalone: true,
+  imports: [ContextMenuComponent],
   templateUrl: './mindmap.html',
   styleUrl: './mindmap.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: {
-    '[attr.data-theme]': 'theme',
+    '[attr.data-theme]': 'theme()',
   },
 })
-export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
-  @Input() data!: MindmapNode;
-  @Input() width = 900;
-  @Input() height = 650;
-  @Input() theme: MindmapTheme = 'dark';
-  @Input() contextMenuFn?: ContextMenuFn;
-  @Input() nodeClickFn?: NodeClickFn;
-  @Input() ariaLabel = 'Mind map';
-  @Input() layoutMode: MindmapLayout = 'force';
+export class MindmapComponent implements OnInit, OnDestroy {
+  readonly data = input.required<MindmapNode>();
+  readonly width = input(900);
+  readonly height = input(650);
+  readonly theme = input<MindmapTheme>('dark');
+  readonly contextMenuFn = input<ContextMenuFn>();
+  readonly nodeClickFn = input<NodeClickFn>();
+  readonly ariaLabel = input('Mind map');
+  readonly layoutMode = input<MindmapLayout>('force');
 
   @ViewChild('svgContainer', { static: true }) svgRef!: ElementRef<SVGSVGElement>;
 
   // ── Context menu state ────────────────────────────────────────────────────
+  // Rendering/keyboard-nav/focus-management for the menu itself lives in
+  // ContextMenuComponent; MindmapComponent only owns what's specific to the
+  // graph: fetching entries via contextMenuFn(), positioning, and refocusing
+  // the SVG node that opened the menu once it closes.
 
   readonly menuOpen = signal(false);
   readonly menuX = signal(0);
   readonly menuY = signal(0);
   readonly menuEntries = signal<MenuEntry[]>([]);
   private menuOpenerNodeId: string | null = null;
-  readonly menuFocusIndex = signal(0);
-  readonly submenuOpenIndex = signal<number | null>(null);
 
-  @ViewChild('menuRoot') menuRootRef?: ElementRef<HTMLDivElement>;
-
-  // Attached outside the Angular zone (see constructor) so a click/keydown anywhere in the
-  // document doesn't schedule change detection unless the menu is actually open.
-  private readonly onDocumentClick = (): void => {
-    if (this.menuOpen()) this.zone.run(() => this.menuOpen.set(false));
-  };
-
-  private readonly onDocumentKeydown = (event: KeyboardEvent): void => {
-    if (event.key === 'Escape' && this.menuOpen()) {
-      this.zone.run(() => this.menuOpen.set(false));
+  onContextMenuClosed(reason: ContextMenuCloseReason): void {
+    this.menuOpen.set(false);
+    if (reason === 'escape') {
       const opener = this.menuOpenerNodeId
         ? this.visibleNodes.find((n) => n.id === this.menuOpenerNodeId)
         : null;
       if (opener) this.moveFocusTo(opener);
-      this.menuOpenerNodeId = null;
     }
-  };
-
-  onMenuItemClick(event: MouseEvent, entry: MenuEntry & { type: 'item' }): void {
-    event.stopPropagation();
-    if (entry.disabled || entry.children?.length) return;
-    entry.action();
-    this.menuOpen.set(false);
-  }
-
-  isMenuItemActive(index: number, isSubmenu: boolean, parentIndex?: number): boolean {
-    if (isSubmenu) {
-      return this.submenuOpenIndex() === parentIndex && this.menuFocusIndex() === index;
-    }
-    return this.submenuOpenIndex() === null && this.menuFocusIndex() === index;
-  }
-
-  // ── Context menu keyboard navigation ────────────────────────────────────────
-
-  private isFocusableMenuEntry(entry: MenuEntry): boolean {
-    return entry.type === 'item' && !entry.disabled;
-  }
-
-  private nextMenuIndex(entries: MenuEntry[], from: number, direction: 1 | -1): number {
-    const n = entries.length;
-    let i = from;
-    for (let step = 0; step < n; step++) {
-      i = (i + direction + n) % n;
-      if (this.isFocusableMenuEntry(entries[i])) return i;
-    }
-    return from;
-  }
-
-  private firstMenuIndex(entries: MenuEntry[]): number {
-    const i = entries.findIndex((e) => this.isFocusableMenuEntry(e));
-    return i === -1 ? 0 : i;
-  }
-
-  private lastMenuIndex(entries: MenuEntry[]): number {
-    for (let i = entries.length - 1; i >= 0; i--) {
-      if (this.isFocusableMenuEntry(entries[i])) return i;
-    }
-    return 0;
-  }
-
-  private focusActiveMenuItem(): void {
-    // setTimeout (a macrotask), not queueMicrotask: Angular's zone-triggered change detection
-    // runs on the microtask queue, so a microtask here can race ahead of the DOM update that
-    // creates/moves the tabindex="0" item. A macrotask is guaranteed to run after CD settles.
-    setTimeout(() => {
-      this.menuRootRef?.nativeElement.querySelector<HTMLElement>('[tabindex="0"]')?.focus();
-    });
-  }
-
-  onMenuKeydown(event: KeyboardEvent): void {
-    const inSubmenu = this.submenuOpenIndex() !== null;
-    const entries = inSubmenu
-      ? (this.menuEntries()[this.submenuOpenIndex()!] as MenuEntry & { type: 'item' }).children!
-      : this.menuEntries();
-
-    switch (event.key) {
-      case 'ArrowDown':
-        event.preventDefault();
-        this.menuFocusIndex.set(this.nextMenuIndex(entries, this.menuFocusIndex(), 1));
-        break;
-      case 'ArrowUp':
-        event.preventDefault();
-        this.menuFocusIndex.set(this.nextMenuIndex(entries, this.menuFocusIndex(), -1));
-        break;
-      case 'Home':
-        event.preventDefault();
-        this.menuFocusIndex.set(this.firstMenuIndex(entries));
-        break;
-      case 'End':
-        event.preventDefault();
-        this.menuFocusIndex.set(this.lastMenuIndex(entries));
-        break;
-      case 'ArrowRight': {
-        if (inSubmenu) break;
-        const current = entries[this.menuFocusIndex()];
-        if (current?.type === 'item' && current.children?.length) {
-          event.preventDefault();
-          this.submenuOpenIndex.set(this.menuFocusIndex());
-          this.menuFocusIndex.set(this.firstMenuIndex(current.children));
-        }
-        break;
-      }
-      case 'ArrowLeft': {
-        if (inSubmenu) {
-          event.preventDefault();
-          this.menuFocusIndex.set(this.submenuOpenIndex()!);
-          this.submenuOpenIndex.set(null);
-        }
-        break;
-      }
-      case 'Enter':
-      case ' ': {
-        event.preventDefault();
-        const active = entries[this.menuFocusIndex()];
-        if (active?.type === 'item' && !active.disabled) {
-          if (active.children?.length) {
-            this.submenuOpenIndex.set(this.menuFocusIndex());
-            this.menuFocusIndex.set(this.firstMenuIndex(active.children));
-          } else {
-            active.action();
-            this.menuOpen.set(false);
-          }
-        }
-        break;
-      }
-    }
-
-    this.focusActiveMenuItem();
+    this.menuOpenerNodeId = null;
   }
 
   // ── D3 internals ─────────────────────────────────────────────────────────
@@ -255,7 +147,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
   private rootNode!: D3Node;
 
   private get tc(): ThemeConfig {
-    return THEMES[this.theme];
+    return THEMES[this.theme()];
   }
 
   private colorScale!: d3.ScaleOrdinal<number, string>;
@@ -263,46 +155,50 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
   private visibleNodes: D3Node[] = [];
   private focusedNodeId: string | null = null;
 
-  constructor(private zone: NgZone, private destroyRef: DestroyRef) {
-    this.zone.runOutsideAngular(() => {
-      document.addEventListener('click', this.onDocumentClick);
-      document.addEventListener('keydown', this.onDocumentKeydown);
+  /** Rebuilt once per updateEdges() call so node hover only touches its own incident links, not every link in the graph. */
+  private linksByNode = new Map<string, D3Link[]>();
+
+  constructor(private zone: NgZone) {
+    // Each effect's first run happens once ngOnInit's own initSvg()/render() have already
+    // set up the initial state, so it's skipped here — mirrors the old ngOnChanges'
+    // `!changes[...].firstChange` checks, just per-input instead of via a single dispatcher.
+    let widthHeightFirstRun = true;
+    effect(() => {
+      const width = this.width();
+      const height = this.height();
+      if (widthHeightFirstRun) { widthHeightFirstRun = false; return; }
+      this.svg.attr('width', width).attr('height', height);
     });
-    this.destroyRef.onDestroy(() => {
-      document.removeEventListener('click', this.onDocumentClick);
-      document.removeEventListener('keydown', this.onDocumentKeydown);
+
+    let themeFirstRun = true;
+    effect(() => {
+      this.theme();
+      if (themeFirstRun) { themeFirstRun = false; return; }
+      this.applyThemeToBackground();
+      if (this.rootNode) this.redraw();
+    });
+
+    let layoutModeFirstRun = true;
+    effect(() => {
+      this.layoutMode();
+      if (layoutModeFirstRun) { layoutModeFirstRun = false; return; }
+      if (this.rootNode) {
+        this.redraw();
+        this.zoomToFitAfterSettle();
+      }
+    });
+
+    let dataFirstRun = true;
+    effect(() => {
+      this.data();
+      if (dataFirstRun) { dataFirstRun = false; return; }
+      this.render();
     });
   }
 
   ngOnInit(): void {
     this.initSvg();
-    if (this.data) this.render();
-  }
-
-  ngOnChanges(changes: SimpleChanges): void {
-    if (!this.svg) return;
-
-    if (changes['width'] || changes['height']) {
-      this.svg.attr('width', this.width).attr('height', this.height);
-    }
-
-    if (changes['theme']) {
-      this.applyThemeToBackground();
-      if (this.rootNode) this.redraw();
-      return;
-    }
-
-    if (changes['layoutMode'] && !changes['layoutMode'].firstChange) {
-      if (this.rootNode) {
-        this.redraw();
-        this.zoomToFitAfterSettle();
-      }
-      return;
-    }
-
-    if (changes['data'] && !changes['data'].firstChange) {
-      this.render();
-    }
+    this.render();
   }
 
   ngOnDestroy(): void {
@@ -313,10 +209,10 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
 
   private initSvg(): void {
     this.svg = d3.select(this.svgRef.nativeElement)
-      .attr('width', this.width)
-      .attr('height', this.height)
+      .attr('width', this.width())
+      .attr('height', this.height())
       .attr('role', 'tree')
-      .attr('aria-label', this.ariaLabel);
+      .attr('aria-label', this.ariaLabel());
 
     this.svg.append('rect')
       .attr('class', 'mm-bg')
@@ -332,8 +228,12 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .scaleExtent(ZOOM_SCALE_EXTENT)
       .on('zoom', (event) => this.g.attr('transform', event.transform));
 
-    this.svg.call(this.zoomBehavior);
-    this.svg.call(this.zoomBehavior.transform, d3.zoomIdentity.translate(this.width / 2, this.height / 2));
+    // Attached outside the Angular zone so every wheel/pan tick doesn't schedule
+    // a full app-wide change-detection pass — see the constructor for the same pattern.
+    this.zone.runOutsideAngular(() => {
+      this.svg.call(this.zoomBehavior);
+      this.svg.call(this.zoomBehavior.transform, d3.zoomIdentity.translate(this.width() / 2, this.height() / 2));
+    });
   }
 
   private applyThemeToBackground(): void {
@@ -341,13 +241,22 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     this.svg.select('defs').select('#mm-glow').remove();
   }
 
+  /**
+   * These D3-driven transitions move the viewport/graph itself (pan, zoom, layout-switch
+   * repositioning) rather than fading a color/opacity, so — unlike the CSS transitions in
+   * mindmap.scss, which already key off the same media query — they're gated here too.
+   */
+  private prefersReducedMotion(): boolean {
+    return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  }
+
   // ── View controls ────────────────────────────────────────────────────────
 
   /** Re-centers the graph at scale 1, undoing any pan/zoom. */
   resetView(): void {
     if (!this.svg) return;
-    this.svg.transition().duration(FIT_TRANSITION_MS)
-      .call(this.zoomBehavior.transform, d3.zoomIdentity.translate(this.width / 2, this.height / 2));
+    this.svg.transition().duration(this.prefersReducedMotion() ? 0 : FIT_TRANSITION_MS)
+      .call(this.zoomBehavior.transform, d3.zoomIdentity.translate(this.width() / 2, this.height() / 2));
   }
 
   /** Pans/scales so every visible node fits in the viewport, within the configured zoom bounds. */
@@ -361,8 +270,8 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       Math.max(
         ZOOM_SCALE_EXTENT[0],
         Math.min(
-          (this.width - FIT_PADDING * 2) / bounds.width,
-          (this.height - FIT_PADDING * 2) / bounds.height,
+          (this.width() - FIT_PADDING * 2) / bounds.width,
+          (this.height() - FIT_PADDING * 2) / bounds.height,
         ),
       ),
     );
@@ -370,11 +279,11 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     const cy = bounds.y + bounds.height / 2;
 
     const transform = d3.zoomIdentity
-      .translate(this.width / 2, this.height / 2)
+      .translate(this.width() / 2, this.height() / 2)
       .scale(scale)
       .translate(-cx, -cy);
 
-    this.svg.transition().duration(FIT_TRANSITION_MS)
+    this.svg.transition().duration(this.prefersReducedMotion() ? 0 : FIT_TRANSITION_MS)
       .call(this.zoomBehavior.transform, transform);
   }
 
@@ -385,8 +294,8 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
    * duration to elapse in radial mode (which runs no simulation at all).
    */
   private zoomToFitAfterSettle(): void {
-    if (this.layoutMode === 'radial') {
-      setTimeout(() => this.zoomToFit(), RADIAL_TRANSITION_MS);
+    if (this.layoutMode() === 'radial') {
+      setTimeout(() => this.zoomToFit(), this.prefersReducedMotion() ? 0 : RADIAL_TRANSITION_MS);
       return;
     }
     this.simulation?.on('end.layoutSwitch', () => {
@@ -402,7 +311,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .domain([0, 1, 2, 3, 4, 5])
       .range(this.tc.nodeColors);
 
-    const brighterBy = this.theme === 'light' ? 0.4 : 0.6;
+    const brighterBy = this.theme() === 'light' ? 0.4 : 0.6;
     this.strokeColorByDepth = this.tc.nodeColors.map((color) =>
       (d3.color(color) as d3.RGBColor).brighter(brighterBy).formatHex());
   }
@@ -411,67 +320,6 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     return this.strokeColorByDepth[d.depth % this.strokeColorByDepth.length];
   }
 
-  // ── Data → D3 node tree ────────────────────────────────────────────────────
-
-  private buildTree(raw: MindmapNode, parent: D3Node | null, depth: number): D3Node {
-    const node: D3Node = {
-      id: raw.id,
-      label: raw.label,
-      depth,
-      collapsed: false,
-      _children: null,
-      children: null,
-      parent,
-      sourceNode: raw,
-      x: (Math.random() - 0.5) * 60,
-      y: (Math.random() - 0.5) * 60,
-    };
-    node.children = (raw.children ?? []).map((c) => this.buildTree(c, node, depth + 1));
-    return node;
-  }
-
-  private flattenVisible(node: D3Node, nodes: D3Node[], links: D3Link[]): void {
-    nodes.push(node);
-    (node.children ?? []).forEach((c) => {
-      links.push({ source: node, target: c });
-      this.flattenVisible(c, nodes, links);
-    });
-  }
-
-  // ── Tree navigation (keyboard) ──────────────────────────────────────────────
-
-  private nextVisible(nodes: D3Node[], id: string): D3Node | null {
-    const i = nodes.findIndex((n) => n.id === id);
-    if (i === -1 || i === nodes.length - 1) return null;
-    return nodes[i + 1];
-  }
-
-  private previousVisible(nodes: D3Node[], id: string): D3Node | null {
-    const i = nodes.findIndex((n) => n.id === id);
-    if (i <= 0) return null;
-    return nodes[i - 1];
-  }
-
-  private firstVisible(nodes: D3Node[]): D3Node | null {
-    return nodes[0] ?? null;
-  }
-
-  private lastVisible(nodes: D3Node[]): D3Node | null {
-    return nodes.length ? nodes[nodes.length - 1] : null;
-  }
-
-  private firstChild(d: D3Node): D3Node | null {
-    return d.children && d.children.length ? d.children[0] : null;
-  }
-
-  private isDescendantOf(node: D3Node, ancestor: D3Node): boolean {
-    let cur = node.parent;
-    while (cur) {
-      if (cur.id === ancestor.id) return true;
-      cur = cur.parent;
-    }
-    return false;
-  }
 
   private applyTabindex(selection: d3.Selection<SVGGElement, D3Node, SVGGElement, unknown>): void {
     selection.attr('tabindex', (d) => (d.id === this.focusedNodeId ? 0 : -1));
@@ -488,13 +336,13 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     switch (event.key) {
       case 'ArrowDown': {
         event.preventDefault();
-        const next = this.nextVisible(this.visibleNodes, d.id);
+        const next = nextVisible(this.visibleNodes, d.id);
         if (next) this.moveFocusTo(next);
         break;
       }
       case 'ArrowUp': {
         event.preventDefault();
-        const prev = this.previousVisible(this.visibleNodes, d.id);
+        const prev = previousVisible(this.visibleNodes, d.id);
         if (prev) this.moveFocusTo(prev);
         break;
       }
@@ -503,7 +351,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
         if (d._children && d._children.length) {
           this.toggleCollapse(d);
         } else {
-          const child = this.firstChild(d);
+          const child = firstChild(d);
           if (child) this.moveFocusTo(child);
         }
         break;
@@ -520,19 +368,19 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       case 'Enter':
       case ' ': {
         event.preventDefault();
-        if (this.nodeClickFn?.(d.sourceNode) === true) return;
+        if (this.nodeClickFn()?.(d.sourceNode) === true) return;
         this.toggleCollapse(d);
         break;
       }
       case 'Home': {
         event.preventDefault();
-        const first = this.firstVisible(this.visibleNodes);
+        const first = firstVisible(this.visibleNodes);
         if (first) this.moveFocusTo(first);
         break;
       }
       case 'End': {
         event.preventDefault();
-        const last = this.lastVisible(this.visibleNodes);
+        const last = lastVisible(this.visibleNodes);
         if (last) this.moveFocusTo(last);
         break;
       }
@@ -550,26 +398,10 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     }
   }
 
-  // ── Radial layout ────────────────────────────────────────────────────────────
-
-  /** Computes deterministic radial-tree target positions for the visible subtree (d3-hierarchy + d3-tree, mapped through polar coordinates). Writes targetX/targetY onto each visible node; does not touch x/y. */
-  private computeRadialPositions(): void {
-    const hierarchyRoot = d3.hierarchy<D3Node>(this.rootNode);
-    const maxRadius = hierarchyRoot.height * RADIAL_RING_SPACING;
-    const layout = d3.tree<D3Node>().size([2 * Math.PI, maxRadius]);
-
-    layout(hierarchyRoot).each((node) => {
-      const angle = node.x - Math.PI / 2;
-      const radius = node.y;
-      node.data.targetX = radius * Math.cos(angle);
-      node.data.targetY = radius * Math.sin(angle);
-    });
-  }
-
   // ── Render / re-render ─────────────────────────────────────────────────────
 
   private render(): void {
-    this.rootNode = this.buildTree(this.data, null, 0);
+    this.rootNode = buildTree(this.data(), null, 0);
     this.focusedNodeId = this.rootNode.id;
     this.redraw();
   }
@@ -578,16 +410,16 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     this.buildColorScale();
     const nodes: D3Node[] = [];
     const links: D3Link[] = [];
-    this.flattenVisible(this.rootNode, nodes, links);
+    flattenVisible(this.rootNode, nodes, links);
     this.visibleNodes = nodes;
 
-    if (this.layoutMode === 'force') {
+    if (this.layoutMode() === 'force') {
       this.zone.runOutsideAngular(() => this.syncForceSimulation(nodes, links));
       return;
     }
 
-    this.computeRadialPositions();
-    if (this.layoutMode === 'hybrid') {
+    computeRadialPositions(this.rootNode);
+    if (this.layoutMode() === 'hybrid') {
       this.zone.runOutsideAngular(() => this.syncHybridSimulation(nodes, links));
     } else {
       this.zone.runOutsideAngular(() => this.syncRadialLayout(nodes, links));
@@ -610,7 +442,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
         .distance((d) => LINK_DISTANCE_BASE + d.target.depth * LINK_DISTANCE_PER_DEPTH));
       this.simulation.force('charge', d3.forceManyBody().strength(CHARGE_STRENGTH));
       this.simulation.force('center', d3.forceCenter(0, 0));
-      this.simulation.force('collision', d3.forceCollide<D3Node>((d) => this.nodeRadius(d) + COLLISION_PADDING));
+      this.simulation.force('collision', d3.forceCollide<D3Node>((d) => nodeRadius(d) + COLLISION_PADDING));
       this.simulation.force('x', null);
       this.simulation.force('y', null);
       this.simulation.alpha(REDRAW_ALPHA).restart();
@@ -621,7 +453,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
           .distance((d) => LINK_DISTANCE_BASE + d.target.depth * LINK_DISTANCE_PER_DEPTH))
         .force('charge', d3.forceManyBody().strength(CHARGE_STRENGTH))
         .force('center', d3.forceCenter(0, 0))
-        .force('collision', d3.forceCollide<D3Node>((d) => this.nodeRadius(d) + COLLISION_PADDING))
+        .force('collision', d3.forceCollide<D3Node>((d) => nodeRadius(d) + COLLISION_PADDING))
         .alphaDecay(ALPHA_DECAY)
         .on('tick', () => this.tick());
     }
@@ -651,13 +483,13 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       this.simulation.force('center', null);
       this.simulation.force('x', d3.forceX<D3Node>((d) => d.targetX ?? 0).strength(HYBRID_POSITION_STRENGTH));
       this.simulation.force('y', d3.forceY<D3Node>((d) => d.targetY ?? 0).strength(HYBRID_POSITION_STRENGTH));
-      this.simulation.force('collision', d3.forceCollide<D3Node>((d) => this.nodeRadius(d) + COLLISION_PADDING));
+      this.simulation.force('collision', d3.forceCollide<D3Node>((d) => nodeRadius(d) + COLLISION_PADDING));
       this.simulation.alpha(HYBRID_ALPHA).restart();
     } else {
       this.simulation = d3.forceSimulation<D3Node>(nodes)
         .force('x', d3.forceX<D3Node>((d) => d.targetX ?? 0).strength(HYBRID_POSITION_STRENGTH))
         .force('y', d3.forceY<D3Node>((d) => d.targetY ?? 0).strength(HYBRID_POSITION_STRENGTH))
-        .force('collision', d3.forceCollide<D3Node>((d) => this.nodeRadius(d) + COLLISION_PADDING))
+        .force('collision', d3.forceCollide<D3Node>((d) => nodeRadius(d) + COLLISION_PADDING))
         .alphaDecay(ALPHA_DECAY)
         .on('tick', () => this.tick());
     }
@@ -684,12 +516,14 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     this.updateEdges(links);
     this.updateNodes(nodes);
 
+    const duration = this.prefersReducedMotion() ? 0 : RADIAL_TRANSITION_MS;
+
     this.g.select<SVGGElement>('.nodes').selectAll<SVGGElement, D3Node>('g.node')
-      .transition().duration(RADIAL_TRANSITION_MS)
+      .transition().duration(duration)
       .attr('transform', (d) => `translate(${d.x},${d.y})`);
 
     this.g.select<SVGGElement>('.links').selectAll<SVGLineElement, D3Link>('line')
-      .transition().duration(RADIAL_TRANSITION_MS)
+      .transition().duration(duration)
       .attr('x1', (d) => d.source.x!)
       .attr('y1', (d) => d.source.y!)
       .attr('x2', (d) => d.target.x!)
@@ -727,6 +561,15 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .attr('stroke', this.tc.edgeStroke)
       .attr('stroke-width', 1.5)
       .attr('stroke-opacity', this.tc.edgeOpacity);
+
+    this.linksByNode.clear();
+    for (const link of links) {
+      for (const id of [link.source.id, link.target.id]) {
+        const incident = this.linksByNode.get(id);
+        if (incident) incident.push(link);
+        else this.linksByNode.set(id, [link]);
+      }
+    }
   }
 
   private updateNodes(nodes: D3Node[]): void {
@@ -745,19 +588,19 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   private openContextMenu(d: D3Node, x: number, y: number): void {
-    if (!this.contextMenuFn) return;
-    this.contextMenuFn(d.sourceNode).then((entries) => {
-      this.zone.run(() => {
-        this.menuEntries.set(entries);
-        this.menuX.set(x);
-        this.menuY.set(y);
-        this.menuOpenerNodeId = d.id;
-        this.submenuOpenIndex.set(null);
-        this.menuFocusIndex.set(this.firstMenuIndex(entries));
-        this.menuOpen.set(true);
-      });
-      this.focusActiveMenuItem();
-    });
+    const contextMenuFn = this.contextMenuFn();
+    if (!contextMenuFn) return;
+    contextMenuFn(d.sourceNode)
+      .then((entries) => {
+        this.zone.run(() => {
+          this.menuEntries.set(entries);
+          this.menuX.set(x);
+          this.menuY.set(y);
+          this.menuOpenerNodeId = d.id;
+          this.menuOpen.set(true);
+        });
+      })
+      .catch((err) => console.error('mindmap: contextMenuFn rejected, menu not opened', err));
   }
 
   private openContextMenuForNode(d: D3Node): void {
@@ -777,7 +620,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       .attr('class', 'node')
       .call(this.dragBehavior())
       .on('click', (_event, d) => this.zone.run(() => {
-        if (this.nodeClickFn?.(d.sourceNode) === true) return;
+        if (this.nodeClickFn()?.(d.sourceNode) === true) return;
         this.toggleCollapse(d);
       }))
       .on('contextmenu', (event: MouseEvent, d: D3Node) => {
@@ -786,20 +629,19 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
         this.openContextMenu(d, event.clientX, event.clientY);
       })
       .on('mouseover', (_event, d) => {
+        // linksByNode.get(d.id) returns object references from the same links array
+        // bound to these DOM elements this redraw, so reference identity via Set.has()
+        // works directly — no need to re-derive a string key per link per attr call.
+        const incident = new Set(this.linksByNode.get(d.id));
         this.g.select('.links').selectAll<SVGLineElement, D3Link>('line')
-          .transition().duration(150)
-          .attr('stroke-opacity', (link) =>
-            link.source.id === d.id || link.target.id === d.id ? 1 : 0.15)
-          .attr('stroke-width', (link) =>
-            link.source.id === d.id || link.target.id === d.id ? 2 : 1.5)
-          .attr('stroke', (link) =>
-            link.source.id === d.id || link.target.id === d.id
-              ? this.colorScale(d.depth)
-              : this.tc.edgeStroke);
+          .transition().duration(HOVER_TRANSITION_MS)
+          .attr('stroke-opacity', (link) => (incident.has(link) ? 1 : 0.15))
+          .attr('stroke-width', (link) => (incident.has(link) ? 2 : 1.5))
+          .attr('stroke', (link) => (incident.has(link) ? this.colorScale(d.depth) : this.tc.edgeStroke));
       })
       .on('mouseout', () => {
         this.g.select('.links').selectAll<SVGLineElement, D3Link>('line')
-          .transition().duration(150)
+          .transition().duration(HOVER_TRANSITION_MS)
           .attr('stroke-opacity', this.tc.edgeOpacity)
           .attr('stroke-width', 1.5)
           .attr('stroke', this.tc.edgeStroke);
@@ -821,29 +663,29 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
   /** Depth/theme/collapse-state-dependent attrs, reapplied to entered + existing nodes alike. */
   private applyNodeTheme(selection: d3.Selection<SVGGElement, D3Node, SVGGElement, unknown>): void {
     selection.select<SVGCircleElement>('circle.halo')
-      .attr('r', (d) => this.nodeRadius(d) + 5)
+      .attr('r', (d) => nodeRadius(d) + 5)
       .attr('fill', 'none')
       .attr('stroke', (d) => this.colorScale(d.depth))
       .attr('stroke-opacity', this.tc.haloOpacity)
       .attr('stroke-width', 7);
 
     selection.select<SVGCircleElement>('circle.body')
-      .attr('r', (d) => this.nodeRadius(d))
+      .attr('r', (d) => nodeRadius(d))
       .attr('fill', (d) => this.colorScale(d.depth))
-      .attr('fill-opacity', this.theme === 'light' ? 1 : 0.92)
+      .attr('fill-opacity', this.theme() === 'light' ? 1 : 0.92)
       .attr('stroke', (d) => this.strokeColorFor(d))
       .attr('stroke-width', 1.5);
 
     selection.select<SVGTextElement>('text')
       .text((d) => d.label)
-      .attr('dy', (d) => this.nodeRadius(d) + 13)
+      .attr('dy', (d) => nodeRadius(d) + 13)
       .attr('fill', this.tc.labelFill)
       .attr('font-size', (d) => (d.depth === 0 ? 13 : 11))
       .attr('font-weight', (d) => (d.depth === 0 ? '600' : '400'));
 
     selection.select<SVGCircleElement>('circle.badge')
-      .attr('cx', (d) => this.nodeRadius(d))
-      .attr('cy', (d) => -this.nodeRadius(d))
+      .attr('cx', (d) => nodeRadius(d))
+      .attr('cy', (d) => -nodeRadius(d))
       .attr('fill', this.tc.badgeFill)
       .attr('opacity', (d) => (d._children && d._children.length ? 1 : 0));
   }
@@ -860,10 +702,6 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
         const hasChildren = !!(d.children?.length || d._children?.length);
         return hasChildren ? String(!!d.children?.length) : null;
       });
-  }
-
-  private nodeRadius(d: D3Node): number {
-    return NODE_RADII[Math.min(d.depth, NODE_RADII.length - 1)];
   }
 
   // ── Tick ───────────────────────────────────────────────────────────────────
@@ -891,7 +729,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     if (hasVisible) {
       if (this.focusedNodeId && this.focusedNodeId !== d.id) {
         const focused = this.visibleNodes.find((n) => n.id === this.focusedNodeId);
-        if (focused && this.isDescendantOf(focused, d)) {
+        if (focused && isDescendantOf(focused, d)) {
           refocusTarget = d;
         }
       }

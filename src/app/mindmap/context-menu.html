@@ -1,0 +1,56 @@
+<div class="mm-context-menu"
+     #menuRoot
+     role="menu"
+     aria-label="Node actions"
+     [style.left.px]="x()"
+     [style.top.px]="y()"
+     (click)="$event.stopPropagation()"
+     (keydown)="onMenuKeydown($event)">
+  <ul class="mm-menu" role="presentation">
+    @for (entry of entries(); track $index; let entryIndex = $index) {
+      @if (entry.type === 'separator') {
+        <li class="mm-sep" role="separator"></li>
+      } @else if (entry.type === 'topic') {
+        <li class="mm-topic" role="presentation">{{ entry.label }}</li>
+      } @else {
+        <li class="mm-item"
+            role="menuitem"
+            [attr.aria-disabled]="entry.disabled || null"
+            [attr.tabindex]="isMenuItemActive($index, false) ? 0 : -1"
+            [class.mm-item--disabled]="entry.disabled"
+            [class.mm-item--has-sub]="entry.children?.length"
+            [class.mm-item--sub-open]="submenuOpenIndex() === $index"
+            [class.mm-item--danger]="entry.intent === 'danger'"
+            [class.mm-item--warning]="entry.intent === 'warning'"
+            (click)="onMenuItemClick($event, entry)">
+          <span class="mm-item__icon" aria-hidden="true">{{ entry.icon ?? '' }}</span>
+          <span class="mm-item__label">{{ entry.label }}</span>
+          @if (entry.children?.length) {
+            <span class="mm-item__arrow" aria-hidden="true">›</span>
+            <ul class="mm-menu mm-submenu" role="menu">
+              @for (sub of entry.children!; track $index) {
+                @if (sub.type === 'separator') {
+                  <li class="mm-sep" role="separator"></li>
+                } @else if (sub.type === 'topic') {
+                  <li class="mm-topic" role="presentation">{{ sub.label }}</li>
+                } @else {
+                  <li class="mm-item"
+                      role="menuitem"
+                      [attr.aria-disabled]="sub.disabled || null"
+                      [attr.tabindex]="isMenuItemActive($index, true, entryIndex) ? 0 : -1"
+                      [class.mm-item--disabled]="sub.disabled"
+                      [class.mm-item--danger]="sub.intent === 'danger'"
+                      [class.mm-item--warning]="sub.intent === 'warning'"
+                      (click)="onMenuItemClick($event, sub)">
+                    <span class="mm-item__icon" aria-hidden="true">{{ sub.icon ?? '' }}</span>
+                    <span class="mm-item__label">{{ sub.label }}</span>
+                  </li>
+                }
+              }
+            </ul>
+          }
+        </li>
+      }
+    }
+  </ul>
+</div>
