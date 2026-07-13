@@ -21,6 +21,10 @@ export class App {
   }
 
   cycleLayoutMode(): void {
+    if (this.dataMode() === 'dag') {
+      this.layoutMode.set('force');
+      return;
+    }
     const i = this.layoutModes.indexOf(this.layoutMode());
     this.layoutMode.set(this.layoutModes[(i + 1) % this.layoutModes.length]);
   }
