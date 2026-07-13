@@ -239,13 +239,19 @@ export function computeVisibleGraph(
   // node, even if another path also reaches it.
   if (collapseMode === 'global') {
     const collapsedIds = new Set(nodes.filter((n) => n.collapsed).map((n) => n.id));
+    // `pruned` tracks "already traversed in this downstream walk," independent of `visible`
+    // membership — it's what lets the walk continue through a node that Phase 1 never marked
+    // visible (e.g. an intermediate node whose only path in was through a collapsed ancestor)
+    // while still guarding against infinite loops on cycles.
+    const pruned = new Set<string>();
     for (const collapsedId of collapsedIds) {
       const substack = [...(outgoing.get(collapsedId) ?? []).map((e) => e.target)];
       while (substack.length) {
         const n = substack.pop()!;
-        if (!visible.has(n.id)) continue; // already excluded
-        if (seedIds.has(n.id)) continue; // a seed is never hidden
-        visible.delete(n.id);
+        if (pruned.has(n.id)) continue; // already traversed in this pass — cycle guard
+        pruned.add(n.id);
+        if (seedIds.has(n.id)) continue; // a seed is never hidden, and the walk stops there
+        visible.delete(n.id); // unconditional: no-op if n was never visible to begin with
         for (const e of outgoing.get(n.id) ?? []) substack.push(e.target);
       }
     }

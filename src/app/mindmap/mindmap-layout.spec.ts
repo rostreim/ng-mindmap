@@ -490,4 +490,31 @@ describe('computeVisibleGraph', () => {
     const { visibleNodes } = computeVisibleGraph(nodes, edges, 'global');
     expect(visibleNodes.map((n) => n.id).sort()).toEqual(['a', 'b', 'b1']);
   });
+
+  it('global mode: prunes a shared descendant reached only through a non-collapsed intermediate node', () => {
+    // r -> m -> shared, p2 -> shared, shared -> child. `m` has a single parent (r) and is
+    // never collapsed itself, so Phase 1 never marks it visible once `r` is collapsed. The
+    // Phase 2 pruning walk must still traverse through `m` to reach and hide `shared` and
+    // `child`, even though `m` itself was never in `visible`.
+    const graph: MindmapGraph = {
+      nodes: [
+        { id: 'r', label: 'Root' },
+        { id: 'm', label: 'Middle' },
+        { id: 'p2', label: 'Parent 2' },
+        { id: 'shared', label: 'Shared' },
+        { id: 'child', label: 'Child' },
+      ],
+      edges: [
+        { source: 'r', target: 'm' },
+        { source: 'm', target: 'shared' },
+        { source: 'p2', target: 'shared' },
+        { source: 'shared', target: 'child' },
+      ],
+    };
+    const { nodes, edges } = buildGraph(graph);
+    nodes.find((n) => n.id === 'r')!.collapsed = true;
+
+    const { visibleNodes } = computeVisibleGraph(nodes, edges, 'global');
+    expect(visibleNodes.map((n) => n.id).sort()).toEqual(['p2', 'r']);
+  });
 });
