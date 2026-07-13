@@ -14,6 +14,18 @@ import {
 } from '@angular/core';
 import * as d3 from 'd3';
 import { MindmapNode, D3Node, D3Link, MenuEntry, ContextMenuFn, NodeClickFn } from './mindmap.model';
+import {
+  buildTree,
+  computeRadialPositions,
+  firstChild,
+  firstVisible,
+  flattenVisible,
+  isDescendantOf,
+  lastVisible,
+  nextVisible,
+  nodeRadius,
+  previousVisible,
+} from './mindmap-layout';
 
 export type MindmapTheme = 'dark' | 'light';
 export type MindmapLayout = 'force' | 'radial' | 'hybrid';
@@ -41,9 +53,6 @@ const REDRAW_ALPHA = 0.3;
 
 const ZOOM_SCALE_EXTENT: [number, number] = [0.1, 5];
 
-/** Node radius in px, indexed by depth; last entry repeats for any deeper level. */
-const NODE_RADII = [18, 12, 8];
-
 /** Minimum pointer travel (px) before a drag suppresses the following click, so a small drag doesn't also toggle collapse. */
 const DRAG_CLICK_DISTANCE = 4;
 
@@ -54,8 +63,6 @@ const HOVER_TRANSITION_MS = 150;
 const FIT_PADDING = 60;
 const FIT_TRANSITION_MS = 400;
 
-/** Radial distance (px) between consecutive depth rings in 'radial'/'hybrid' layout mode. */
-const RADIAL_RING_SPACING = 100;
 /** Duration (ms) of the position transition when 'radial' mode redraws (no simulation to smooth it otherwise). */
 const RADIAL_TRANSITION_MS = 400;
 /** Pull strength (0-1) of 'hybrid' mode's forceX/forceY toward each node's computed radial target. */
@@ -427,80 +434,6 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     return this.strokeColorByDepth[d.depth % this.strokeColorByDepth.length];
   }
 
-  // ── Data → D3 node tree ────────────────────────────────────────────────────
-
-  /**
-   * `ancestors` tracks only the current root-to-node path (added on entry, removed on
-   * exit), not every node ever visited — so a MindmapNode legitimately reused across two
-   * sibling branches isn't flagged, only a node that is its own ancestor (a real cycle,
-   * which would otherwise recurse forever and stack-overflow instead of failing clearly).
-   */
-  private buildTree(raw: MindmapNode, parent: D3Node | null, depth: number, ancestors = new Set<MindmapNode>()): D3Node {
-    if (ancestors.has(raw)) {
-      throw new Error(`mindmap: cyclic MindmapNode graph detected at id "${raw.id}" — buildTree() requires a tree, not a graph`);
-    }
-    ancestors.add(raw);
-
-    const node: D3Node = {
-      id: raw.id,
-      label: raw.label,
-      depth,
-      collapsed: false,
-      _children: null,
-      children: null,
-      parent,
-      sourceNode: raw,
-      x: (Math.random() - 0.5) * 60,
-      y: (Math.random() - 0.5) * 60,
-    };
-    node.children = (raw.children ?? []).map((c) => this.buildTree(c, node, depth + 1, ancestors));
-
-    ancestors.delete(raw);
-    return node;
-  }
-
-  private flattenVisible(node: D3Node, nodes: D3Node[], links: D3Link[]): void {
-    nodes.push(node);
-    (node.children ?? []).forEach((c) => {
-      links.push({ source: node, target: c });
-      this.flattenVisible(c, nodes, links);
-    });
-  }
-
-  // ── Tree navigation (keyboard) ──────────────────────────────────────────────
-
-  private nextVisible(nodes: D3Node[], id: string): D3Node | null {
-    const i = nodes.findIndex((n) => n.id === id);
-    if (i === -1 || i === nodes.length - 1) return null;
-    return nodes[i + 1];
-  }
-
-  private previousVisible(nodes: D3Node[], id: string): D3Node | null {
-    const i = nodes.findIndex((n) => n.id === id);
-    if (i <= 0) return null;
-    return nodes[i - 1];
-  }
-
-  private firstVisible(nodes: D3Node[]): D3Node | null {
-    return nodes[0] ?? null;
-  }
-
-  private lastVisible(nodes: D3Node[]): D3Node | null {
-    return nodes.length ? nodes[nodes.length - 1] : null;
-  }
-
-  private firstChild(d: D3Node): D3Node | null {
-    return d.children && d.children.length ? d.children[0] : null;
-  }
-
-  private isDescendantOf(node: D3Node, ancestor: D3Node): boolean {
-    let cur = node.parent;
-    while (cur) {
-      if (cur.id === ancestor.id) return true;
-      cur = cur.parent;
-    }
-    return false;
-  }
 
   private applyTabindex(selection: d3.Selection<SVGGElement, D3Node, SVGGElement, unknown>): void {
     selection.attr('tabindex', (d) => (d.id === this.focusedNodeId ? 0 : -1));
@@ -517,13 +450,13 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     switch (event.key) {
       case 'ArrowDown': {
         event.preventDefault();
-        const next = this.nextVisible(this.visibleNodes, d.id);
+        const next = nextVisible(this.visibleNodes, d.id);
         if (next) this.moveFocusTo(next);
         break;
       }
       case 'ArrowUp': {
         event.preventDefault();
-        const prev = this.previousVisible(this.visibleNodes, d.id);
+        const prev = previousVisible(this.visibleNodes, d.id);
         if (prev) this.moveFocusTo(prev);
         break;
       }
@@ -532,7 +465,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
         if (d._children && d._children.length) {
           this.toggleCollapse(d);
         } else {
-          const child = this.firstChild(d);
+          const child = firstChild(d);
           if (child) this.moveFocusTo(child);
         }
         break;
@@ -555,13 +488,13 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       }
       case 'Home': {
         event.preventDefault();
-        const first = this.firstVisible(this.visibleNodes);
+        const first = firstVisible(this.visibleNodes);
         if (first) this.moveFocusTo(first);
         break;
       }
       case 'End': {
         event.preventDefault();
-        const last = this.lastVisible(this.visibleNodes);
+        const last = lastVisible(this.visibleNodes);
         if (last) this.moveFocusTo(last);
         break;
       }
@@ -579,26 +512,10 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     }
   }
 
-  // ── Radial layout ────────────────────────────────────────────────────────────
-
-  /** Computes deterministic radial-tree target positions for the visible subtree (d3-hierarchy + d3-tree, mapped through polar coordinates). Writes targetX/targetY onto each visible node; does not touch x/y. */
-  private computeRadialPositions(): void {
-    const hierarchyRoot = d3.hierarchy<D3Node>(this.rootNode);
-    const maxRadius = hierarchyRoot.height * RADIAL_RING_SPACING;
-    const layout = d3.tree<D3Node>().size([2 * Math.PI, maxRadius]);
-
-    layout(hierarchyRoot).each((node) => {
-      const angle = node.x - Math.PI / 2;
-      const radius = node.y;
-      node.data.targetX = radius * Math.cos(angle);
-      node.data.targetY = radius * Math.sin(angle);
-    });
-  }
-
   // ── Render / re-render ─────────────────────────────────────────────────────
 
   private render(): void {
-    this.rootNode = this.buildTree(this.data, null, 0);
+    this.rootNode = buildTree(this.data, null, 0);
     this.focusedNodeId = this.rootNode.id;
     this.redraw();
   }
@@ -607,7 +524,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     this.buildColorScale();
     const nodes: D3Node[] = [];
     const links: D3Link[] = [];
-    this.flattenVisible(this.rootNode, nodes, links);
+    flattenVisible(this.rootNode, nodes, links);
     this.visibleNodes = nodes;
 
     if (this.layoutMode === 'force') {
@@ -615,7 +532,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       return;
     }
 
-    this.computeRadialPositions();
+    computeRadialPositions(this.rootNode);
     if (this.layoutMode === 'hybrid') {
       this.zone.runOutsideAngular(() => this.syncHybridSimulation(nodes, links));
     } else {
@@ -639,7 +556,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
         .distance((d) => LINK_DISTANCE_BASE + d.target.depth * LINK_DISTANCE_PER_DEPTH));
       this.simulation.force('charge', d3.forceManyBody().strength(CHARGE_STRENGTH));
       this.simulation.force('center', d3.forceCenter(0, 0));
-      this.simulation.force('collision', d3.forceCollide<D3Node>((d) => this.nodeRadius(d) + COLLISION_PADDING));
+      this.simulation.force('collision', d3.forceCollide<D3Node>((d) => nodeRadius(d) + COLLISION_PADDING));
       this.simulation.force('x', null);
       this.simulation.force('y', null);
       this.simulation.alpha(REDRAW_ALPHA).restart();
@@ -650,7 +567,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
           .distance((d) => LINK_DISTANCE_BASE + d.target.depth * LINK_DISTANCE_PER_DEPTH))
         .force('charge', d3.forceManyBody().strength(CHARGE_STRENGTH))
         .force('center', d3.forceCenter(0, 0))
-        .force('collision', d3.forceCollide<D3Node>((d) => this.nodeRadius(d) + COLLISION_PADDING))
+        .force('collision', d3.forceCollide<D3Node>((d) => nodeRadius(d) + COLLISION_PADDING))
         .alphaDecay(ALPHA_DECAY)
         .on('tick', () => this.tick());
     }
@@ -680,13 +597,13 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
       this.simulation.force('center', null);
       this.simulation.force('x', d3.forceX<D3Node>((d) => d.targetX ?? 0).strength(HYBRID_POSITION_STRENGTH));
       this.simulation.force('y', d3.forceY<D3Node>((d) => d.targetY ?? 0).strength(HYBRID_POSITION_STRENGTH));
-      this.simulation.force('collision', d3.forceCollide<D3Node>((d) => this.nodeRadius(d) + COLLISION_PADDING));
+      this.simulation.force('collision', d3.forceCollide<D3Node>((d) => nodeRadius(d) + COLLISION_PADDING));
       this.simulation.alpha(HYBRID_ALPHA).restart();
     } else {
       this.simulation = d3.forceSimulation<D3Node>(nodes)
         .force('x', d3.forceX<D3Node>((d) => d.targetX ?? 0).strength(HYBRID_POSITION_STRENGTH))
         .force('y', d3.forceY<D3Node>((d) => d.targetY ?? 0).strength(HYBRID_POSITION_STRENGTH))
-        .force('collision', d3.forceCollide<D3Node>((d) => this.nodeRadius(d) + COLLISION_PADDING))
+        .force('collision', d3.forceCollide<D3Node>((d) => nodeRadius(d) + COLLISION_PADDING))
         .alphaDecay(ALPHA_DECAY)
         .on('tick', () => this.tick());
     }
@@ -854,14 +771,14 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
   /** Depth/theme/collapse-state-dependent attrs, reapplied to entered + existing nodes alike. */
   private applyNodeTheme(selection: d3.Selection<SVGGElement, D3Node, SVGGElement, unknown>): void {
     selection.select<SVGCircleElement>('circle.halo')
-      .attr('r', (d) => this.nodeRadius(d) + 5)
+      .attr('r', (d) => nodeRadius(d) + 5)
       .attr('fill', 'none')
       .attr('stroke', (d) => this.colorScale(d.depth))
       .attr('stroke-opacity', this.tc.haloOpacity)
       .attr('stroke-width', 7);
 
     selection.select<SVGCircleElement>('circle.body')
-      .attr('r', (d) => this.nodeRadius(d))
+      .attr('r', (d) => nodeRadius(d))
       .attr('fill', (d) => this.colorScale(d.depth))
       .attr('fill-opacity', this.theme === 'light' ? 1 : 0.92)
       .attr('stroke', (d) => this.strokeColorFor(d))
@@ -869,14 +786,14 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
 
     selection.select<SVGTextElement>('text')
       .text((d) => d.label)
-      .attr('dy', (d) => this.nodeRadius(d) + 13)
+      .attr('dy', (d) => nodeRadius(d) + 13)
       .attr('fill', this.tc.labelFill)
       .attr('font-size', (d) => (d.depth === 0 ? 13 : 11))
       .attr('font-weight', (d) => (d.depth === 0 ? '600' : '400'));
 
     selection.select<SVGCircleElement>('circle.badge')
-      .attr('cx', (d) => this.nodeRadius(d))
-      .attr('cy', (d) => -this.nodeRadius(d))
+      .attr('cx', (d) => nodeRadius(d))
+      .attr('cy', (d) => -nodeRadius(d))
       .attr('fill', this.tc.badgeFill)
       .attr('opacity', (d) => (d._children && d._children.length ? 1 : 0));
   }
@@ -893,10 +810,6 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
         const hasChildren = !!(d.children?.length || d._children?.length);
         return hasChildren ? String(!!d.children?.length) : null;
       });
-  }
-
-  private nodeRadius(d: D3Node): number {
-    return NODE_RADII[Math.min(d.depth, NODE_RADII.length - 1)];
   }
 
   // ── Tick ───────────────────────────────────────────────────────────────────
@@ -924,7 +837,7 @@ export class MindmapComponent implements OnInit, OnChanges, OnDestroy {
     if (hasVisible) {
       if (this.focusedNodeId && this.focusedNodeId !== d.id) {
         const focused = this.visibleNodes.find((n) => n.id === this.focusedNodeId);
-        if (focused && this.isDescendantOf(focused, d)) {
+        if (focused && isDescendantOf(focused, d)) {
           refocusTarget = d;
         }
       }

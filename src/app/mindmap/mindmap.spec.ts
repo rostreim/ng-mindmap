@@ -1,11 +1,14 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { MindmapComponent } from './mindmap';
-import { D3Link, D3Node, MenuEntry, MindmapNode } from './mindmap.model';
+import { D3Node, MenuEntry, MindmapNode } from './mindmap.model';
+import { buildTree } from './mindmap-layout';
 
-// These tests exercise buildTree/flattenVisible/toggleCollapse directly without triggering
-// ngOnInit (no fixture.detectChanges()), since ngOnInit sets up the D3 zoom/SVG pipeline,
-// which needs real SVG geometry APIs (e.g. viewBox.baseVal) that jsdom doesn't implement.
-describe('MindmapComponent data functions', () => {
+// These tests exercise toggleCollapse/menu-navigation directly without triggering ngOnInit
+// (no fixture.detectChanges()), since ngOnInit sets up the D3 zoom/SVG pipeline, which needs
+// real SVG geometry APIs (e.g. viewBox.baseVal) that jsdom doesn't implement. Pure tree/layout
+// functions (buildTree, flattenVisible, computeRadialPositions, etc.) are tested directly
+// against mindmap-layout.ts in mindmap-layout.spec.ts — no component/TestBed needed there.
+describe('MindmapComponent', () => {
   let fixture: ComponentFixture<MindmapComponent>;
   let component: MindmapComponent;
 
@@ -39,87 +42,6 @@ describe('MindmapComponent data functions', () => {
     fixture.destroy();
   });
 
-  describe('buildTree', () => {
-    it('converts a MindmapNode tree into a D3Node tree, preserving structure and depth', () => {
-      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
-
-      expect(tree.id).toBe('root');
-      expect(tree.depth).toBe(0);
-      expect(tree.parent).toBeNull();
-      expect(tree.children?.length).toBe(2);
-
-      const [a, b] = tree.children!;
-      expect(a.id).toBe('a');
-      expect(a.depth).toBe(1);
-      expect(a.parent).toBe(tree);
-      expect(a.children?.map((c) => c.id)).toEqual(['a1', 'a2']);
-      expect(a.children![0].depth).toBe(2);
-      expect(a.children![0].parent).toBe(a);
-
-      expect(b.id).toBe('b');
-      expect(b.children).toEqual([]);
-    });
-
-    it('initializes fresh collapse state regardless of any prior state on the source node', () => {
-      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
-
-      expect(tree.collapsed).toBe(false);
-      expect(tree._children).toBeNull();
-    });
-
-    it('throws a clear error instead of stack-overflowing on a cyclic MindmapNode graph', () => {
-      const cyclic: MindmapNode = { id: 'root', label: 'Root', children: [] };
-      cyclic.children = [cyclic];
-
-      expect(() => (component as any).buildTree(cyclic, null, 0)).toThrow(/cyclic/i);
-    });
-
-    it('does not flag non-cyclic shared substructure (same object reused across sibling branches)', () => {
-      const shared: MindmapNode = { id: 'shared', label: 'Shared' };
-      const tree: MindmapNode = {
-        id: 'root',
-        label: 'Root',
-        children: [
-          { id: 'a', label: 'A', children: [shared] },
-          { id: 'b', label: 'B', children: [shared] },
-        ],
-      };
-
-      expect(() => (component as any).buildTree(tree, null, 0)).not.toThrow();
-    });
-  });
-
-  describe('flattenVisible', () => {
-    it('flattens the visible tree into parallel nodes and links arrays', () => {
-      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
-      const nodes: D3Node[] = [];
-      const links: D3Link[] = [];
-      (component as any).flattenVisible(tree, nodes, links);
-
-      expect(nodes.map((n) => n.id)).toEqual(['root', 'a', 'a1', 'a2', 'b']);
-      expect(links.map((l) => `${l.source.id}->${l.target.id}`)).toEqual([
-        'root->a',
-        'a->a1',
-        'a->a2',
-        'root->b',
-      ]);
-    });
-
-    it('excludes a collapsed subtree from the flattened output', () => {
-      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
-      const a = tree.children![0];
-      a._children = a.children;
-      a.children = [];
-
-      const nodes: D3Node[] = [];
-      const links: D3Link[] = [];
-      (component as any).flattenVisible(tree, nodes, links);
-
-      expect(nodes.map((n) => n.id)).toEqual(['root', 'a', 'b']);
-      expect(links.map((l) => `${l.source.id}->${l.target.id}`)).toEqual(['root->a', 'root->b']);
-    });
-  });
-
   describe('toggleCollapse', () => {
     beforeEach(() => {
       // toggleCollapse always ends by calling redraw(), which drives the D3/SVG pipeline.
@@ -129,7 +51,7 @@ describe('MindmapComponent data functions', () => {
     });
 
     it('moves visible children into _children and marks the node collapsed', () => {
-      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
+      const tree: D3Node = buildTree(sampleData, null, 0);
       (component as any).rootNode = tree;
       const a = tree.children![0];
 
@@ -141,7 +63,7 @@ describe('MindmapComponent data functions', () => {
     });
 
     it('restores _children back into children and clears collapsed state on the next toggle', () => {
-      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
+      const tree: D3Node = buildTree(sampleData, null, 0);
       (component as any).rootNode = tree;
       const a = tree.children![0];
 
@@ -154,7 +76,7 @@ describe('MindmapComponent data functions', () => {
     });
 
     it('is a no-op for a leaf node with no children in either direction', () => {
-      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
+      const tree: D3Node = buildTree(sampleData, null, 0);
       (component as any).rootNode = tree;
       const b = tree.children![1];
 
@@ -163,73 +85,6 @@ describe('MindmapComponent data functions', () => {
       expect(b.collapsed).toBe(false);
       expect(b.children).toEqual([]);
       expect(b._children).toBeNull();
-    });
-  });
-
-  describe('nextVisible / previousVisible / firstVisible / lastVisible', () => {
-    it('walks the flattened tree order forward and backward', () => {
-      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
-      const nodes: D3Node[] = [];
-      const links: D3Link[] = [];
-      (component as any).flattenVisible(tree, nodes, links);
-      // order: root, a, a1, a2, b
-
-      expect((component as any).nextVisible(nodes, 'root').id).toBe('a');
-      expect((component as any).nextVisible(nodes, 'a').id).toBe('a1');
-      expect((component as any).nextVisible(nodes, 'b')).toBeNull();
-
-      expect((component as any).previousVisible(nodes, 'b').id).toBe('a2');
-      expect((component as any).previousVisible(nodes, 'a1').id).toBe('a');
-      expect((component as any).previousVisible(nodes, 'root')).toBeNull();
-
-      expect((component as any).firstVisible(nodes).id).toBe('root');
-      expect((component as any).lastVisible(nodes).id).toBe('b');
-    });
-
-    it('returns null for an id not present in the array, and null first/last for an empty array', () => {
-      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
-      const nodes: D3Node[] = [];
-      const links: D3Link[] = [];
-      (component as any).flattenVisible(tree, nodes, links);
-
-      expect((component as any).nextVisible(nodes, 'missing')).toBeNull();
-      expect((component as any).previousVisible(nodes, 'missing')).toBeNull();
-      expect((component as any).firstVisible([])).toBeNull();
-      expect((component as any).lastVisible([])).toBeNull();
-    });
-  });
-
-  describe('firstChild', () => {
-    it('returns the first visible child, or null for a leaf', () => {
-      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
-      const a = tree.children![0];
-      const b = tree.children![1];
-
-      expect((component as any).firstChild(a).id).toBe('a1');
-      expect((component as any).firstChild(b)).toBeNull();
-    });
-
-    it('returns null when children have been collapsed into _children', () => {
-      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
-      const a = tree.children![0];
-      a._children = a.children;
-      a.children = [];
-
-      expect((component as any).firstChild(a)).toBeNull();
-    });
-  });
-
-  describe('isDescendantOf', () => {
-    it('returns true for a direct or transitive descendant, false otherwise', () => {
-      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
-      const a = tree.children![0];
-      const a1 = a.children![0];
-      const b = tree.children![1];
-
-      expect((component as any).isDescendantOf(a1, a)).toBe(true);
-      expect((component as any).isDescendantOf(a1, tree)).toBe(true);
-      expect((component as any).isDescendantOf(a, a1)).toBe(false);
-      expect((component as any).isDescendantOf(b, a)).toBe(false);
     });
   });
 
@@ -269,54 +124,6 @@ describe('MindmapComponent data functions', () => {
       ];
       expect((component as any).firstMenuIndex(allDisabled)).toBe(0);
       expect((component as any).lastMenuIndex(allDisabled)).toBe(0);
-    });
-  });
-
-  describe('computeRadialPositions', () => {
-    it('places a lone root at the origin without dividing by zero', () => {
-      const lone: MindmapNode = { id: 'solo', label: 'Solo' };
-      const tree: D3Node = (component as any).buildTree(lone, null, 0);
-      (component as any).rootNode = tree;
-
-      (component as any).computeRadialPositions();
-
-      expect(tree.targetX).toBeCloseTo(0);
-      expect(tree.targetY).toBeCloseTo(0);
-      expect(Number.isFinite(tree.targetX)).toBe(true);
-      expect(Number.isFinite(tree.targetY)).toBe(true);
-    });
-
-    it('places nodes at increasing radius by depth, with distinct angles for siblings', () => {
-      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
-      (component as any).rootNode = tree;
-
-      (component as any).computeRadialPositions();
-
-      const dist = (n: D3Node) => Math.sqrt(n.targetX! ** 2 + n.targetY! ** 2);
-      const a = tree.children![0];
-      const b = tree.children![1];
-      const [a1, a2] = a.children!;
-
-      expect(dist(tree)).toBeCloseTo(0);
-      expect(dist(a)).toBeGreaterThan(0);
-      expect(dist(a)).toBeCloseTo(dist(b), 5); // same depth => same radius
-      expect(dist(a1)).toBeGreaterThan(dist(a)); // deeper => farther out
-      expect(a1.targetX !== a2.targetX || a1.targetY !== a2.targetY).toBe(true); // distinct angles
-    });
-
-    it('only positions the visible subtree, matching flattenVisible', () => {
-      const tree: D3Node = (component as any).buildTree(sampleData, null, 0);
-      const a = tree.children![0];
-      a._children = a.children;
-      a.children = [];
-      (component as any).rootNode = tree;
-
-      (component as any).computeRadialPositions();
-
-      expect(a.targetX).toBeDefined();
-      const [a1, a2] = a._children!;
-      expect(a1.targetX).toBeUndefined();
-      expect(a2.targetX).toBeUndefined();
     });
   });
 });
