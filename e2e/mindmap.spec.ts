@@ -47,6 +47,31 @@ test('clicking a leaf node whose nodeClickFn intercepts the click announces acti
   await expect(page.locator('g.node')).toHaveCount(FULL_GRAPH_NODE_COUNT);
 });
 
+test('right-click opens a context menu; selecting an item or pressing Escape closes it', async ({ page }) => {
+  // Exercises ContextMenuComponent's document click/keydown listeners and closed.emit(),
+  // which now run with no NgZone wrapping at all (removed as decorative dead weight in a
+  // zoneless app) — this is the real regression risk of that change.
+  //
+  // 'Household' (the root) is used rather than a leaf: the force simulation's center
+  // force keeps it near the middle of the viewport, so the menu it opens (positioned at
+  // the click coordinates) reliably stays on-screen and clickable.
+  const node = page.locator('g.node', { hasText: 'Household' });
+  const menu = page.locator('.mm-context-menu');
+
+  await node.click({ button: 'right' });
+  await expect(menu).toBeVisible();
+
+  await page.locator('.mm-item', { hasText: 'Rename' }).click();
+  await expect(menu).toBeHidden();
+
+  await node.click({ button: 'right' });
+  await expect(menu).toBeVisible();
+
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
+  await expect(node).toBeFocused();
+});
+
 test('keyboard arrow navigation moves the roving tabindex/focus to the next visible node', async ({ page }) => {
   const household = page.locator('g.node', { hasText: 'Household' });
   await household.focus();

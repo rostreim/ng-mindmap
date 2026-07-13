@@ -5,7 +5,6 @@ import {
   OnInit,
   ViewChild,
   ChangeDetectionStrategy,
-  NgZone,
   effect,
   input,
   signal,
@@ -167,7 +166,7 @@ export class MindmapComponent implements OnInit, OnDestroy {
   /** Rebuilt once per updateEdges() call so node hover only touches its own incident links, not every link in the graph. */
   private linksByNode = new Map<string, D3Link[]>();
 
-  constructor(private zone: NgZone) {
+  constructor() {
     // Each effect's first run happens once ngOnInit's own initSvg()/render() have already
     // set up the initial state, so it's skipped here — mirrors the old ngOnChanges'
     // `!changes[...].firstChange` checks, just per-input instead of via a single dispatcher.
@@ -237,15 +236,8 @@ export class MindmapComponent implements OnInit, OnDestroy {
       .scaleExtent(ZOOM_SCALE_EXTENT)
       .on('zoom', (event) => this.g.attr('transform', event.transform));
 
-    // Zoom/pan events (like the D3 tick loop elsewhere in this file) never write to a
-    // signal, so nothing here schedules change detection regardless of zone — this app
-    // has no zone.js installed (zoneless by default in Angular 21), so runOutsideAngular()
-    // is a no-op in practice. Kept for correctness if zone.js is ever reintroduced; see
-    // the "Performance contract" section of CLAUDE.md for the full explanation.
-    this.zone.runOutsideAngular(() => {
-      this.svg.call(this.zoomBehavior);
-      this.svg.call(this.zoomBehavior.transform, d3.zoomIdentity.translate(this.width() / 2, this.height() / 2));
-    });
+    this.svg.call(this.zoomBehavior);
+    this.svg.call(this.zoomBehavior.transform, d3.zoomIdentity.translate(this.width() / 2, this.height() / 2));
   }
 
   private applyThemeToBackground(): void {
@@ -434,15 +426,15 @@ export class MindmapComponent implements OnInit, OnDestroy {
     this.visibleNodes = nodes;
 
     if (this.layoutMode() === 'force') {
-      this.zone.runOutsideAngular(() => this.syncForceSimulation(nodes, links));
+      this.syncForceSimulation(nodes, links);
       return;
     }
 
     computeRadialPositions(this.rootNode);
     if (this.layoutMode() === 'hybrid') {
-      this.zone.runOutsideAngular(() => this.syncHybridSimulation(nodes, links));
+      this.syncHybridSimulation(nodes, links);
     } else {
-      this.zone.runOutsideAngular(() => this.syncRadialLayout(nodes, links));
+      this.syncRadialLayout(nodes, links);
     }
   }
 
@@ -612,13 +604,11 @@ export class MindmapComponent implements OnInit, OnDestroy {
     if (!contextMenuFn) return;
     contextMenuFn(d.sourceNode)
       .then((entries) => {
-        this.zone.run(() => {
-          this.menuEntries.set(entries);
-          this.menuX.set(x);
-          this.menuY.set(y);
-          this.menuOpenerNodeId = d.id;
-          this.menuOpen.set(true);
-        });
+        this.menuEntries.set(entries);
+        this.menuX.set(x);
+        this.menuY.set(y);
+        this.menuOpenerNodeId = d.id;
+        this.menuOpen.set(true);
       })
       .catch((err) => console.error('mindmap: contextMenuFn rejected, menu not opened', err));
   }
@@ -639,13 +629,13 @@ export class MindmapComponent implements OnInit, OnDestroy {
     const nodeGroup = enter.append('g')
       .attr('class', 'node')
       .call(this.dragBehavior())
-      .on('click', (_event, d) => this.zone.run(() => {
+      .on('click', (_event, d) => {
         if (this.nodeClickFn()?.(d.sourceNode) === true) {
           this.liveMessage.set(`${d.label} activated`);
           return;
         }
         this.toggleCollapse(d);
-      }))
+      })
       .on('contextmenu', (event: MouseEvent, d: D3Node) => {
         event.preventDefault();
         event.stopPropagation();
@@ -669,7 +659,7 @@ export class MindmapComponent implements OnInit, OnDestroy {
           .attr('stroke-width', 1.5)
           .attr('stroke', this.tc.edgeStroke);
       })
-      .on('keydown', (event: KeyboardEvent, d: D3Node) => this.zone.run(() => this.onNodeKeydown(event, d)));
+      .on('keydown', (event: KeyboardEvent, d: D3Node) => this.onNodeKeydown(event, d));
 
     const inner = nodeGroup.append('g').attr('class', 'node-scale');
     inner.append('circle').attr('class', 'halo').attr('filter', 'url(#mm-glow)');
