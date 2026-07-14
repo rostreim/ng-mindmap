@@ -158,7 +158,14 @@ h1 {
 
 // Toolbar button hover/focus tooltips — bubble (::after) + arrow (::before),
 // positioned below the button. Timing matches context-menu.scss's mm-menu-in (140ms).
+//
+// Entrance/exit timing is gated through --mm-tooltip-duration (inherited into both
+// pseudo-elements) rather than repeating `transition` per selector: the
+// prefers-reduced-motion override below only has to zero one custom property, instead of
+// having to re-list every hover/focus-visible selector in lockstep with the rules above —
+// a mismatch there previously let a hover-triggered animation silently ignore reduced motion.
 .toolbar button[data-tooltip] {
+  --mm-tooltip-duration: 140ms;
   position: relative;
 
   &::after,
@@ -169,9 +176,9 @@ h1 {
     visibility: hidden;
     pointer-events: none;
     z-index: 10;
-    transition: opacity 140ms cubic-bezier(0.0, 0, 0.2, 1),
-                transform 140ms cubic-bezier(0.0, 0, 0.2, 1),
-                visibility 0s 140ms;
+    transition: opacity var(--mm-tooltip-duration) cubic-bezier(0.0, 0, 0.2, 1),
+                transform var(--mm-tooltip-duration) cubic-bezier(0.0, 0, 0.2, 1),
+                visibility 0s var(--mm-tooltip-duration);
   }
 
   &::after {
@@ -183,7 +190,11 @@ h1 {
     font-family: 'Inter', system-ui, sans-serif;
     font-size: 12px;
     font-weight: 400;
-    white-space: nowrap;
+    // Wraps instead of an unbounded-width single line, so a long description (e.g. the
+    // collapse-mode button's) can't push the centered bubble past the viewport edge.
+    max-width: 200px;
+    white-space: normal;
+    text-align: center;
   }
 
   &::before {
@@ -195,23 +206,24 @@ h1 {
   }
 
   &:hover::after,
-  &:focus-visible::after {
-    opacity: 1;
-    visibility: visible;
-    transform: translateX(-50%) translateY(0);
-    transition: opacity 140ms cubic-bezier(0.0, 0, 0.2, 1),
-                transform 140ms cubic-bezier(0.0, 0, 0.2, 1),
-                visibility 0s;
-  }
-
+  &:focus-visible::after,
   &:hover::before,
   &:focus-visible::before {
     opacity: 1;
     visibility: visible;
-    transform: translateX(-50%) translateY(0) rotate(45deg);
-    transition: opacity 140ms cubic-bezier(0.0, 0, 0.2, 1),
-                transform 140ms cubic-bezier(0.0, 0, 0.2, 1),
+    transition: opacity var(--mm-tooltip-duration) cubic-bezier(0.0, 0, 0.2, 1),
+                transform var(--mm-tooltip-duration) cubic-bezier(0.0, 0, 0.2, 1),
                 visibility 0s;
+  }
+
+  &:hover::after,
+  &:focus-visible::after {
+    transform: translateX(-50%) translateY(0);
+  }
+
+  &:hover::before,
+  &:focus-visible::before {
+    transform: translateX(-50%) translateY(0) rotate(45deg);
   }
 
   main[data-theme='dark'] & {
@@ -244,18 +256,7 @@ h1 {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .toolbar button[data-tooltip]::after,
-  .toolbar button[data-tooltip]::before,
-  .toolbar button[data-tooltip]:hover::after,
-  .toolbar button[data-tooltip]:focus-visible::after,
-  .toolbar button[data-tooltip]:hover::before,
-  .toolbar button[data-tooltip]:focus-visible::before {
-    transition: opacity 0s, visibility 0s;
-  }
-  .toolbar button[data-tooltip]::after {
-    transform: translateX(-50%) translateY(0);
-  }
-  .toolbar button[data-tooltip]::before {
-    transform: translateX(-50%) translateY(0) rotate(45deg);
+  .toolbar button[data-tooltip] {
+    --mm-tooltip-duration: 0s;
   }
 }

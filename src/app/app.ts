@@ -16,6 +16,16 @@ export class App {
 
   private readonly layoutModes: MindmapLayout[] = ['force', 'radial', 'hybrid'];
 
+  readonly themeToggleLabel = computed(() =>
+    this.theme() === 'dark' ? 'Switch to light theme' : 'Switch to dark theme',
+  );
+
+  readonly layoutCycleTooltip = computed(() =>
+    this.dataMode() === 'dag'
+      ? 'Layout is fixed to force for graph (DAG) data'
+      : 'Cycle layout: force → radial → hybrid',
+  );
+
   toggleTheme(): void {
     this.theme.update((t) => (t === 'dark' ? 'light' : 'dark'));
   }
