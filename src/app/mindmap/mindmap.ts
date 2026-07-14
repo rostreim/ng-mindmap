@@ -141,7 +141,7 @@ export class MindmapComponent implements OnInit, OnDestroy {
   private svg!: d3.Selection<SVGSVGElement, unknown, null, undefined>;
   private g!: d3.Selection<SVGGElement, unknown, null, undefined>;
   private zoomBehavior!: d3.ZoomBehavior<SVGSVGElement, unknown>;
-  private simulation!: d3.Simulation<D3GraphNode, D3GraphEdge>;
+  private simulation: d3.Simulation<D3GraphNode, D3GraphEdge> | undefined;
   private allNodes: D3GraphNode[] = [];
   private allEdges: D3GraphEdge[] = [];
   private shape: 'tree' | 'graph' = 'tree';
@@ -296,7 +296,12 @@ export class MindmapComponent implements OnInit, OnDestroy {
    * duration to elapse in radial mode (which runs no simulation at all).
    */
   private zoomToFitAfterSettle(): void {
-    if (this.layoutMode() === 'radial') {
+    // this.simulation, not layoutMode(): graph-shaped/rootless data falls back to 'force' in
+    // redraw() (called just before this, in the same effect) even while the layoutMode() input
+    // still says 'radial' — and that fallback does leave a real simulation to wait on, which
+    // this.simulation's presence reflects directly (syncRadialLayout() nulls it; the other two
+    // sync methods always leave it set).
+    if (!this.simulation) {
       setTimeout(() => this.zoomToFit(), this.prefersReducedMotion() ? 0 : RADIAL_TRANSITION_MS);
       return;
     }
@@ -640,7 +645,11 @@ export class MindmapComponent implements OnInit, OnDestroy {
    * collapse/expand that shifts other nodes' angles).
    */
   private syncRadialLayout(nodes: D3GraphNode[], links: D3GraphEdge[]): void {
+    // Nulled, not just stopped: this.simulation's presence is how dragBehavior() and
+    // zoomToFitAfterSettle() tell whether a force/hybrid simulation is actually active,
+    // without needing to separately track/consult the effective layout mode themselves.
     this.simulation?.stop();
+    this.simulation = undefined;
     this.buildGlowFilter();
 
     for (const n of nodes) {
@@ -923,10 +932,11 @@ export class MindmapComponent implements OnInit, OnDestroy {
     return d3.drag<SVGGElement, D3GraphNode>()
       .clickDistance(DRAG_CLICK_DISTANCE)
       .on('start', (event, d) => {
-        // 'radial' keeps this.simulation around, just stopped (see syncRadialLayout()) —
-        // restarting it here would resurrect a stale force/hybrid simulation and drift
-        // nodes away from their deterministic radial positions after the drag ends.
-        if (!event.active && this.layoutMode() !== 'radial') this.simulation?.alphaTarget(0.3).restart();
+        // this.simulation is undefined in radial mode (syncRadialLayout() nulls it, not just
+        // .stop()s it) — so this is a safe no-op there, without needing to separately check
+        // layoutMode(): restarting a stale force/hybrid simulation would otherwise drift nodes
+        // away from their deterministic radial positions after the drag ends.
+        if (!event.active) this.simulation?.alphaTarget(0.3).restart();
         d.fx = d.x;
         d.fy = d.y;
       })

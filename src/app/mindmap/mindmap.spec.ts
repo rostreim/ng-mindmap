@@ -93,6 +93,22 @@ describe('MindmapComponent', () => {
       expect((component as any).syncForceSimulation).toHaveBeenCalled();
       warnSpy.mockRestore();
     });
+
+  });
+
+  describe('syncRadialLayout', () => {
+    it('nulls this.simulation, not just stops it — dragBehavior() and zoomToFitAfterSettle() key off its presence to tell radial mode from force/hybrid', () => {
+      // A leftover simulation, as if a prior redraw() left force/hybrid mode's simulation
+      // in place before this switch to radial (syncForceSimulation()/syncHybridSimulation()
+      // never clear it themselves — only syncRadialLayout() is responsible for retiring it).
+      const fakeSimulation = { stop: vi.fn() };
+      (component as any).simulation = fakeSimulation;
+
+      (component as any).syncRadialLayout([], []);
+
+      expect(fakeSimulation.stop).toHaveBeenCalled();
+      expect((component as any).simulation).toBeUndefined();
+    });
   });
 
   describe('toggleCollapse', () => {
