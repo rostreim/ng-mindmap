@@ -766,7 +766,12 @@ export class MindmapComponent implements OnInit, OnDestroy {
     const nodeGroup = enter.append('g')
       .attr('class', 'node')
       .call(this.dragBehavior())
-      .on('click', (_event, d) => {
+      .on('click', (event: MouseEvent, d) => {
+        // WebKit dispatches a synthetic `click` (button 0, ctrlKey true) alongside `contextmenu`
+        // for a trackpad/Ctrl+click secondary click — Chromium dispatches only `contextmenu`.
+        // Ignoring ctrlKey here mirrors dragBehavior()'s own filter, which excludes it for the
+        // same reason ("should open the context menu").
+        if (event.ctrlKey) return;
         if (this.nodeClickFn()?.(d.sourceNode) === true) {
           this.liveMessage.set(`${d.label} activated`);
           return;

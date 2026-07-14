@@ -72,6 +72,32 @@ test('right-click opens a context menu; selecting an item or pressing Escape clo
   await expect(node).toBeFocused();
 });
 
+test('a WebKit-style ctrl+click right-click opens the menu without also toggling the node', async ({ page }) => {
+  // WebKit (Safari) dispatches a `click` event (button 0, ctrlKey true) alongside `contextmenu`
+  // for a trackpad/Ctrl+click secondary click — Chromium dispatches only `contextmenu`. We can't
+  // run the real WebKit engine here, so we replay its exact event shape through Chromium and
+  // assert the node click handler ignores it, the same way dragBehavior()'s filter already does.
+  const node = page.locator('g.node', { hasText: 'Household' });
+  const menu = page.locator('.mm-context-menu');
+
+  const box = await node.boundingBox();
+  if (!box) throw new Error('node not visible');
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+
+  await page.evaluate(({ x, y }) => {
+    const target = document.elementFromPoint(x, y);
+    const opts = { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, ctrlKey: true };
+    target?.dispatchEvent(new MouseEvent('mousedown', opts));
+    target?.dispatchEvent(new MouseEvent('contextmenu', opts));
+    target?.dispatchEvent(new MouseEvent('click', opts));
+  }, { x, y });
+
+  await expect(menu).toBeVisible();
+  // The root has 4 children; a spurious toggleCollapse() here would drop the count by 4.
+  await expect(page.locator('g.node')).toHaveCount(FULL_GRAPH_NODE_COUNT);
+});
+
 test('keyboard arrow navigation moves the roving tabindex/focus to the next visible node', async ({ page }) => {
   const household = page.locator('g.node', { hasText: 'Household' });
   await household.focus();
