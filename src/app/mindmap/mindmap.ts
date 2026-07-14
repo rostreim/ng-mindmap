@@ -923,7 +923,10 @@ export class MindmapComponent implements OnInit, OnDestroy {
     return d3.drag<SVGGElement, D3GraphNode>()
       .clickDistance(DRAG_CLICK_DISTANCE)
       .on('start', (event, d) => {
-        if (!event.active) this.simulation?.alphaTarget(0.3).restart();
+        // 'radial' keeps this.simulation around, just stopped (see syncRadialLayout()) —
+        // restarting it here would resurrect a stale force/hybrid simulation and drift
+        // nodes away from their deterministic radial positions after the drag ends.
+        if (!event.active && this.layoutMode() !== 'radial') this.simulation?.alphaTarget(0.3).restart();
         d.fx = d.x;
         d.fy = d.y;
       })
