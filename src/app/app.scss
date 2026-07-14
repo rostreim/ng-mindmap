@@ -245,7 +245,11 @@ h1 {
 
 @media (prefers-reduced-motion: reduce) {
   .toolbar button[data-tooltip]::after,
-  .toolbar button[data-tooltip]::before {
+  .toolbar button[data-tooltip]::before,
+  .toolbar button[data-tooltip]:hover::after,
+  .toolbar button[data-tooltip]:focus-visible::after,
+  .toolbar button[data-tooltip]:hover::before,
+  .toolbar button[data-tooltip]:focus-visible::before {
     transition: opacity 0s, visibility 0s;
   }
   .toolbar button[data-tooltip]::after {
