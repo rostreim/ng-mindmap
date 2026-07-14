@@ -148,7 +148,11 @@ Add this block at the end of `src/app/app.scss` (after the `@keyframes detail-in
 
 @media (prefers-reduced-motion: reduce) {
   .toolbar button[data-tooltip]::after,
-  .toolbar button[data-tooltip]::before {
+  .toolbar button[data-tooltip]::before,
+  .toolbar button[data-tooltip]:hover::after,
+  .toolbar button[data-tooltip]:focus-visible::after,
+  .toolbar button[data-tooltip]:hover::before,
+  .toolbar button[data-tooltip]:focus-visible::before {
     transition: opacity 0s, visibility 0s;
   }
   .toolbar button[data-tooltip]::after {
@@ -159,6 +163,8 @@ Add this block at the end of `src/app/app.scss` (after the `@keyframes detail-in
   }
 }
 ```
+
+> **Note:** the block above supersedes an earlier version of this step that listed only the base `::after`/`::before` selectors. That version lost the CSS cascade to the more-specific `:hover::after`/`:focus-visible::after` rules (which declare their own 140ms transition), so reduced motion wasn't actually respected on entrance — see commit `7d19f27` ("fix: reduced-motion override didn't beat hover/focus-visible specificity"), found during task review.
 
 - [ ] **Step 3: Type-check**
 
