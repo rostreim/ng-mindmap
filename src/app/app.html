@@ -1,12 +1,12 @@
 <main [attr.data-theme]="theme()">
   <div class="toolbar">
     <h1>Mindmap</h1>
-    <button class="theme-toggle" (click)="mm.resetView()">⟲ Reset</button>
-    <button class="theme-toggle" (click)="mm.zoomToFit()">⤢ Fit</button>
-    <button class="theme-toggle" (click)="cycleLayoutMode()">⟐ {{ layoutMode() }}</button>
-    <button class="theme-toggle" (click)="toggleDataMode()">⎇ {{ dataMode() }}</button>
-    <button class="theme-toggle" (click)="toggleCollapseMode()">⊟ {{ collapseMode() }}</button>
-    <button class="theme-toggle" (click)="toggleTheme()" [attr.aria-label]="theme() === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'">
+    <button class="theme-toggle" data-tooltip="Reset pan and zoom to the default view" (click)="mm.resetView()">⟲ Reset</button>
+    <button class="theme-toggle" data-tooltip="Zoom and pan to fit the whole graph" (click)="mm.zoomToFit()">⤢ Fit</button>
+    <button class="theme-toggle" data-tooltip="Cycle layout: force → radial → hybrid" (click)="cycleLayoutMode()">⟐ {{ layoutMode() }}</button>
+    <button class="theme-toggle" data-tooltip="Switch between tree and graph (DAG) sample data" (click)="toggleDataMode()">⎇ {{ dataMode() }}</button>
+    <button class="theme-toggle" data-tooltip="Toggle collapse propagation: global vs per-edge" (click)="toggleCollapseMode()">⊟ {{ collapseMode() }}</button>
+    <button class="theme-toggle" [attr.data-tooltip]="theme() === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'" (click)="toggleTheme()" [attr.aria-label]="theme() === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'">
       @if (theme() === 'dark') {
         <span class="icon">☀</span> Light
       } @else {
