@@ -155,3 +155,108 @@ h1 {
   from { opacity: 0; transform: translateY(-4px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+
+// Toolbar button hover/focus tooltips — bubble (::after) + arrow (::before),
+// positioned below the button. Timing matches context-menu.scss's mm-menu-in (140ms).
+//
+// Entrance/exit timing is gated through --mm-tooltip-duration (inherited into both
+// pseudo-elements) rather than repeating `transition` per selector: the
+// prefers-reduced-motion override below only has to zero one custom property, instead of
+// having to re-list every hover/focus-visible selector in lockstep with the rules above —
+// a mismatch there previously let a hover-triggered animation silently ignore reduced motion.
+.toolbar button[data-tooltip] {
+  --mm-tooltip-duration: 140ms;
+  position: relative;
+
+  &::after,
+  &::before {
+    position: absolute;
+    left: 50%;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    z-index: 10;
+    transition: opacity var(--mm-tooltip-duration) cubic-bezier(0.0, 0, 0.2, 1),
+                transform var(--mm-tooltip-duration) cubic-bezier(0.0, 0, 0.2, 1),
+                visibility 0s var(--mm-tooltip-duration);
+  }
+
+  &::after {
+    content: attr(data-tooltip);
+    top: calc(100% + 10px);
+    transform: translateX(-50%) translateY(-4px);
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 12px;
+    font-weight: 400;
+    // Wraps instead of an unbounded-width single line, so a long description (e.g. the
+    // collapse-mode button's) can't push the centered bubble past the viewport edge.
+    max-width: 200px;
+    white-space: normal;
+    text-align: center;
+  }
+
+  &::before {
+    content: '';
+    top: calc(100% + 6px);
+    width: 8px;
+    height: 8px;
+    transform: translateX(-50%) translateY(-4px) rotate(45deg);
+  }
+
+  &:hover::after,
+  &:focus-visible::after,
+  &:hover::before,
+  &:focus-visible::before {
+    opacity: 1;
+    visibility: visible;
+    transition: opacity var(--mm-tooltip-duration) cubic-bezier(0.0, 0, 0.2, 1),
+                transform var(--mm-tooltip-duration) cubic-bezier(0.0, 0, 0.2, 1),
+                visibility 0s;
+  }
+
+  &:hover::after,
+  &:focus-visible::after {
+    transform: translateX(-50%) translateY(0);
+  }
+
+  &:hover::before,
+  &:focus-visible::before {
+    transform: translateX(-50%) translateY(0) rotate(45deg);
+  }
+
+  main[data-theme='dark'] & {
+    &::after {
+      background: #24273a;
+      border: 1px solid #3b3b5c;
+      color: #cdd6f4;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+    &::before {
+      background: #24273a;
+      border-left: 1px solid #3b3b5c;
+      border-top: 1px solid #3b3b5c;
+    }
+  }
+
+  main[data-theme='light'] & {
+    &::after {
+      background: #ffffff;
+      border: 1px solid #e9eaeb;
+      color: #414651;
+      box-shadow: 0 4px 16px rgba(65, 70, 81, 0.14);
+    }
+    &::before {
+      background: #ffffff;
+      border-left: 1px solid #e9eaeb;
+      border-top: 1px solid #e9eaeb;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toolbar button[data-tooltip] {
+    --mm-tooltip-duration: 0s;
+  }
+}
