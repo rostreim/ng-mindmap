@@ -5,6 +5,7 @@
 /tmp
 /out-tsc
 /bazel-out
+demo/*.bundle.js
 
 # Playwright
 /test-results
