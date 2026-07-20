@@ -32,6 +32,21 @@
 - Consumes: `MindmapGraph`, `D3GraphNode`, `D3GraphEdge`, `MenuEntry`, `ContextMenuFn`, `NodeClickFn` from `./mindmap.model` (unchanged). `buildGraph`, `classifyShape`, `computeRadialPositions`, `computeVisibleGraph`, `cycleOutgoingEdge`, `nodeRadius`, `resolveEntryNode` from `./mindmap-layout` (unchanged). `ContextMenuCloseReason` (type-only) and `ContextMenuComponent` from `./context-menu` (unchanged).
 - Produces: `MindmapCore` class and `MindmapCoreOptions` interface, exported from `mindmap-core.ts` — consumed by `mindmap.ts` in this same task, and later by Task 2's bundle build. `MindmapComponent` keeps its existing public surface (`data`, `width`, `height`, `theme`, `contextMenuFn`, `nodeClickFn`, `ariaLabel`, `layoutMode`, `collapseMode`, `edgeDirection` inputs; `resetView()`, `zoomToFit()`, `onContextMenuClosed()`, `menuOpen`/`menuX`/`menuY`/`menuEntries`/`liveMessage` signals) — exported from `mindmap.ts` at the same path, so `app.ts`'s `import { MindmapComponent, MindmapLayout, MindmapTheme } from './mindmap/mindmap'` needs no changes.
 
+> **Amendment (discovered during execution, not anticipated when this plan was written):**
+> This repo's Angular vitest builder (`@angular/build:unit-test`) unconditionally throws on
+> any `vi.mock()` call with a relative-path target (confirmed in
+> `node_modules/@angular/build/src/builders/unit-test/runners/vitest/build-options.js`), so
+> Step 5's original design (`vi.mock('./mindmap-core', ...)`) cannot work in this repo. The
+> fix actually implemented: a small DI seam in `mindmap.ts` only (NOT `mindmap-core.ts`,
+> which stays free of `@angular/core` imports) — a `MindmapCoreFactory` type and a
+> `MINDMAP_CORE_FACTORY` `InjectionToken` (default factory: `(svg, data, options) => new
+> MindmapCore(svg, data, options)`), injected into `MindmapComponent` and called instead of
+> a bare `new MindmapCore(...)`. Tests substitute it via `TestBed`'s own
+> `providers: [{ provide: MINDMAP_CORE_FACTORY, useValue: stubFactory }]` instead of module
+> mocking — Angular's own recommended testing idiom, and it sidesteps the builder's guard
+> entirely rather than working around it. Step 3 and Step 5 below reflect this as the
+> as-built state.
+
 - [ ] **Step 1: Read the current files in full to confirm exact content**
 
 Read `src/app/mindmap/mindmap.ts`, `src/app/mindmap/mindmap.spec.ts`, `src/app/mindmap/mindmap.model.ts`, and `src/app/mindmap/context-menu.ts` (just enough of the latter to confirm the exact `ContextMenuCloseReason` type export) before making any changes, since this plan's diffs assume today's exact content and a stale assumption here would produce a subtly wrong result.
