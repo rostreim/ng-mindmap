@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MindmapCore — standalone demo (no Angular)</title>
+<style>
+  body { margin: 0; background: #181825; color: #cdd6f4; font-family: system-ui, sans-serif; }
+  header { position: fixed; top: 0; left: 0; right: 0; padding: 12px 16px; font-size: 13px; z-index: 1; }
+  svg { display: block; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<header>MindmapCore standalone demo — zero Angular loaded. Drag to pan, scroll to zoom, drag a node, click a node to collapse/expand.</header>
+<svg id="mm"></svg>
+<script src="mindmap-core.bundle.js"></script>
+<script>
+  const { MindmapCore } = MindmapCoreBundle;
+
+  const data = {
+    entryNodeId: 'root',
+    nodes: [
+      { id: 'root', label: 'ARC #89621684' },
+      { id: 'applicant', label: 'Jane Applicant' },
+      { id: 'status', label: 'Approved' },
+      { id: 'cite1', label: "CC&R's Paragraph A.7" },
+      { id: 'cite2', label: 'PP&G Outbuildings' },
+      { id: 'disc1', label: 'Compliance Review' },
+    ],
+    edges: [
+      { source: 'root', target: 'applicant' },
+      { source: 'root', target: 'status' },
+      { source: 'root', target: 'disc1' },
+      { source: 'disc1', target: 'cite1' },
+      { source: 'disc1', target: 'cite2' },
+    ],
+  };
+
+  const svgEl = document.getElementById('mm');
+  new MindmapCore(svgEl, data, {
+    width: window.innerWidth,
+    height: window.innerHeight,
+    theme: 'dark',
+    layoutMode: 'force',
+    ariaLabel: 'Mind map demo',
+    getCollapseMode: () => 'global',
+    getEdgeDirection: () => undefined,
+    getContextMenuFn: () => undefined,
+    getNodeClickFn: () => undefined,
+    onLiveMessage: (message) => console.log('[live]', message),
+  });
+</script>
+</body>
+</html>
