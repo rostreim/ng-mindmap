@@ -1444,17 +1444,17 @@ describe('MindmapComponent (wiring)', () => {
 
 - [ ] **Step 6: Type-check**
 
-Run: `cd mindmap-app && npx tsc -b --noEmit`
+Run (from the repo root, `/Users/rostreim/dev/ng-mindmap` — the whole repo IS the app; there is no `mindmap-app/` subdirectory, `CLAUDE.md`'s "run from `mindmap-app/`" refers to the project's package name, not a path): `npx tsc -b --noEmit`
 Expected: no errors. If there are errors, they most likely indicate a mismatch between `MindmapCoreOptions`'s fields and how `mindmap.ts`'s `ngOnInit` constructs them, or a stray reference to a removed field — fix by comparing against the exact interfaces above, don't guess.
 
 - [ ] **Step 7: Run the full test suite**
 
-Run: `cd mindmap-app && npm test`
+Run: `npm test`
 Expected: all pass — `mindmap-core.spec.ts` (new), `mindmap.spec.ts` (thinned), `context-menu.spec.ts` (unchanged), `mindmap-layout.spec.ts` (unchanged).
 
 - [ ] **Step 8: Run the Playwright e2e suite**
 
-Run: `cd mindmap-app && npm run e2e`
+Run: `npm run e2e`
 Expected: all pass. This is the strongest evidence that real interactive behavior (drag, zoom, keyboard nav in real Chromium) is unchanged — it exercises the fully-assembled component through a real browser and doesn't care about the internal core/wrapper split.
 
 - [ ] **Step 9: Commit**
@@ -1469,25 +1469,21 @@ git commit -m "refactor: extract framework-agnostic MindmapCore from MindmapComp
 ### Task 2: Proof-of-portability bundle + demo
 
 **Files:**
-- Create: `esbuild.core.mjs` (repo root, alongside `mindmap-app/` — check exact relative paths against where `mindmap-app/` actually sits before writing the script's `entryPoints`/`outfile` paths)
+- Create: `esbuild.core.mjs` (repo root, sibling to `demo/`)
 - Create: `demo/index.html`
-- Modify: `mindmap-app/package.json`
+- Modify: `package.json` (repo root — the whole repo is a single package named `mindmap-app`, there is no `mindmap-app/` subdirectory)
 
 **Interfaces:**
 - Consumes: `MindmapCore` from `src/app/mindmap/mindmap-core.ts` (Task 1), `MindmapGraph` shape from `mindmap.model.ts` (unchanged).
 - Produces: nothing consumed by a later task in this plan — this is the last implementation task before manual verification.
 
-- [ ] **Step 1: Confirm the exact repo layout**
+- [ ] **Step 1: Add esbuild as a devDependency**
 
-Run: `ls /Users/rostreim/dev/ng-mindmap` and `cat /Users/rostreim/dev/ng-mindmap/mindmap-app/package.json | head -5` (or wherever `package.json` actually sits — `CLAUDE.md` says "All commands are run from `mindmap-app/`", confirm this is a real subdirectory and not the repo root before writing paths in the steps below).
+Run (from the repo root, `/Users/rostreim/dev/ng-mindmap`): `npm install --save-dev esbuild`
 
-- [ ] **Step 2: Add esbuild as a devDependency**
+- [ ] **Step 2: Write the bundle build script**
 
-Run: `cd mindmap-app && npm install --save-dev esbuild`
-
-- [ ] **Step 3: Write the bundle build script**
-
-Create `mindmap-app/esbuild.core.mjs`:
+Create `esbuild.core.mjs` at the repo root:
 
 ```javascript
 import * as esbuild from 'esbuild';
@@ -1497,25 +1493,46 @@ await esbuild.build({
   bundle: true,
   format: 'iife',
   globalName: 'MindmapCoreBundle',
-  outfile: '../demo/mindmap-core.bundle.js',
+  outfile: 'demo/mindmap-core.bundle.js',
   target: 'es2020',
 });
 
 console.log('Built demo/mindmap-core.bundle.js');
 ```
 
-Add a script entry to `mindmap-app/package.json`'s `"scripts"` block:
+Change the repo-root `package.json`'s `"scripts"` block from:
 
 ```json
-    "build:core-bundle": "node esbuild.core.mjs"
+  "scripts": {
+    "ng": "ng",
+    "start": "ng serve",
+    "build": "ng build",
+    "watch": "ng build --watch --configuration development",
+    "test": "ng test",
+    "e2e": "playwright test"
+  },
 ```
 
-- [ ] **Step 4: Verify the bundle builds**
+to:
 
-Run: `cd mindmap-app && npm run build:core-bundle`
+```json
+  "scripts": {
+    "ng": "ng",
+    "start": "ng serve",
+    "build": "ng build",
+    "watch": "ng build --watch --configuration development",
+    "test": "ng test",
+    "e2e": "playwright test",
+    "build:core-bundle": "node esbuild.core.mjs"
+  },
+```
+
+- [ ] **Step 3: Verify the bundle builds**
+
+Run: `npm run build:core-bundle`
 Expected: `Built demo/mindmap-core.bundle.js` printed, and the file exists at `demo/mindmap-core.bundle.js` relative to the repo root.
 
-- [ ] **Step 5: Write the demo page**
+- [ ] **Step 4: Write the demo page**
 
 Create `demo/index.html`:
 
@@ -1575,10 +1592,10 @@ Create `demo/index.html`:
 </html>
 ```
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add mindmap-app/esbuild.core.mjs mindmap-app/package.json demo/index.html demo/mindmap-core.bundle.js
+git add esbuild.core.mjs package.json demo/index.html demo/mindmap-core.bundle.js
 git commit -m "feat: add standalone MindmapCore bundle build + non-Angular demo"
 ```
 
@@ -1596,7 +1613,7 @@ Note: whether `demo/mindmap-core.bundle.js` (a build artifact) should actually b
 
 - [ ] **Step 1: Run the Angular demo app and re-verify every existing interaction**
 
-Run: `cd mindmap-app && npm start`, open `http://localhost:4200` (or the port it picks).
+Run (from the repo root): `npm start`, open `http://localhost:4200` (or the port it picks).
 Expected: identical behavior to before this refactor — drag nodes, zoom/pan, click a node to collapse/expand, right-click for the context menu, keyboard nav (Tab to a node, arrow keys, Enter/Space, Shift+F10), theme toggle, layout-mode cycle (force → radial → hybrid), tree vs. DAG data-mode toggle. Nothing should look, feel, or behave differently.
 
 - [ ] **Step 2: Open the standalone demo with zero Angular**
