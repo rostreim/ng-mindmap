@@ -267,11 +267,16 @@ export function cycleOutgoingEdge(
 // onNodeKeydown()). nodeRadius/computeRadialPositions are rebuilt against D3GraphNode/
 // D3GraphEdge below, in Task 12.
 
-const AVG_CHAR_WIDTH_FACTOR = 0.55;
+// Deliberately tuned below a literal average-character-width estimate (which
+// would be closer to ~0.55 for this font stack) -- a slightly tighter value
+// trades a bit of overlap-safety margin for denser packing, since dense
+// graphs (e.g. a forest with many sibling nodes) benefited more from tighter
+// spacing than from a strictly accurate collision buffer.
+const AVG_CHAR_WIDTH_FACTOR = 0.35;
 
 /** Font size in px for a node's label, matching applyNodeTheme's rendering --
- * depth 0 (a tree's root; also every node in graph/forest-shaped data, since
- * depth is never set there) renders larger than everything else. */
+ * depth 0 (a tree's root, or a forest component's own root) renders larger
+ * than everything else. */
 export function fontSizeFor(d: { depth?: number }): number {
   return d.depth === 0 ? 13 : 11;
 }
