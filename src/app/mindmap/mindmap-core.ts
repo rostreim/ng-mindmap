@@ -267,6 +267,20 @@ export class MindmapCore {
       .call(this.zoomBehavior.transform, transform);
   }
 
+  zoomToNode(nodeId: string): void {
+    if (!this.svg) return;
+    const target = this.allNodes.find((n) => n.id === nodeId);
+    if (!target || target.x === undefined || target.y === undefined) return;
+
+    const transform = d3.zoomIdentity
+      .translate(this.width / 2, this.height / 2)
+      .scale(1)
+      .translate(-target.x, -target.y);
+
+    this.svg.transition().duration(this.prefersReducedMotion() ? 0 : FIT_TRANSITION_MS)
+      .call(this.zoomBehavior.transform, transform);
+  }
+
   private zoomToFitAfterSettle(): void {
     if (!this.simulation) {
       setTimeout(() => this.zoomToFit(), this.prefersReducedMotion() ? 0 : RADIAL_TRANSITION_MS);

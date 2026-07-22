@@ -136,6 +136,27 @@ describe('MindmapCore', () => {
     });
   });
 
+  describe('zoomToNode', () => {
+    it('calls zoomBehavior.transform when the node is found', () => {
+      (core as any).allNodes = [{ id: 'a', x: 100, y: 200 }];
+      const transformSpy = vi.fn();
+      (core as any).zoomBehavior = { transform: transformSpy };
+
+      core.zoomToNode('a');
+
+      expect(transformSpy).toHaveBeenCalled();
+    });
+
+    it('is a no-op when the node id is not found', () => {
+      (core as any).allNodes = [];
+      const transformSpy = vi.fn();
+      (core as any).zoomBehavior = { transform: transformSpy };
+
+      expect(() => core.zoomToNode('missing')).not.toThrow();
+      expect(transformSpy).not.toHaveBeenCalled();
+    });
+  });
+
   describe('layout-mode gating', () => {
     it('falls back to force with a console.warn when layoutMode is radial on graph-shaped data', () => {
       const dagGraph: MindmapGraph = {
