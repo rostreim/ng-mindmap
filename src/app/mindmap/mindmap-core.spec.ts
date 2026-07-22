@@ -155,6 +155,15 @@ describe('MindmapCore', () => {
       expect(() => core.zoomToNode('missing')).not.toThrow();
       expect(transformSpy).not.toHaveBeenCalled();
     });
+
+    it('is a no-op when the node is found but has no x/y yet', () => {
+      (core as any).allNodes = [{ id: 'a' }];
+      const transformSpy = vi.fn();
+      (core as any).zoomBehavior = { transform: transformSpy };
+
+      expect(() => core.zoomToNode('a')).not.toThrow();
+      expect(transformSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe('layout-mode gating', () => {
