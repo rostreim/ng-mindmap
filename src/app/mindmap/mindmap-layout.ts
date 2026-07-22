@@ -267,6 +267,25 @@ export function cycleOutgoingEdge(
 // onNodeKeydown()). nodeRadius/computeRadialPositions are rebuilt against D3GraphNode/
 // D3GraphEdge below, in Task 12.
 
+const AVG_CHAR_WIDTH_FACTOR = 0.55;
+
+/** Font size in px for a node's label, matching applyNodeTheme's rendering --
+ * depth 0 (a tree's root; also every node in graph/forest-shaped data, since
+ * depth is never set there) renders larger than everything else. */
+export function fontSizeFor(d: { depth?: number }): number {
+  return d.depth === 0 ? 13 : 11;
+}
+
+/** Rough half-width estimate of a node's rendered label, in px -- no real
+ * text measurement (no getBBox/getComputedTextLength, which jsdom doesn't
+ * support -- mindmap-core.ts's zoomToFit is the one place that already
+ * needs a real browser for exactly this reason, and is e2e-only). Cheap
+ * enough to fold directly into a force simulation's per-tick collision
+ * radius callback. */
+export function labelHalfWidth(d: { label: string; depth?: number }): number {
+  return (d.label.length * fontSizeFor(d) * AVG_CHAR_WIDTH_FACTOR) / 2;
+}
+
 /** Node radius in px, indexed by depth (undefined for graph-shaped data, treated as depth 0); last NODE_RADII entry repeats for any deeper level. */
 export function nodeRadius(d: D3GraphNode): number {
   return NODE_RADII[Math.min(d.depth ?? 0, NODE_RADII.length - 1)];
