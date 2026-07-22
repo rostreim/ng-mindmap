@@ -94,6 +94,35 @@ describe('MindmapCore', () => {
     });
   });
 
+  describe('detail-glyph rendering', () => {
+    function glyphText(id: string): string {
+      return (core as any).g.select('.nodes').selectAll('g.node')
+        .filter((d: D3GraphNode) => d.id === id)
+        .select('text.detail-glyph')
+        .text();
+    }
+
+    it('renders the glyph character only for nodes where getNodeHasDetailFn returns true', () => {
+      core = createDetachedCore(sampleGraph, {
+        getNodeHasDetailFn: () => (node) => node.id === 'a1',
+      });
+
+      (core as any).render();
+
+      expect(glyphText('a1')).toBe('ⓘ');
+      expect(glyphText('a2')).toBe('');
+      expect(glyphText('root')).toBe('');
+    });
+
+    it('leaves the glyph text empty on every node when getNodeHasDetailFn is omitted', () => {
+      core = createDetachedCore(sampleGraph);
+
+      expect(() => (core as any).render()).not.toThrow();
+
+      expect(glyphText('a1')).toBe('');
+    });
+  });
+
   describe('layout-mode gating', () => {
     it('falls back to force with a console.warn when layoutMode is radial on graph-shaped data', () => {
       const dagGraph: MindmapGraph = {

@@ -6,6 +6,7 @@ import {
   MenuEntry,
   ContextMenuFn,
   NodeClickFn,
+  NodeHasDetailFn,
 } from './mindmap.model';
 import {
   buildGraph,
@@ -85,6 +86,8 @@ const THEMES: Record<MindmapTheme, ThemeConfig> = {
  * behavior, where these four inputs are read directly via signal-function-calls at point of
  * use with no watching effect (see CLAUDE.md's note on collapseMode having "no dedicated
  * reactive trigger of its own" -- the same was true pre-extraction for the other three).
+ * getNodeHasDetailFn is optional (no existing consumer -- e.g. the Angular wrapper -- is
+ * required to provide it) and follows the same live-read-getter convention.
  */
 export interface MindmapCoreOptions {
   width: number;
@@ -96,6 +99,7 @@ export interface MindmapCoreOptions {
   getEdgeDirection: () => 'arrow' | 'plain' | undefined;
   getContextMenuFn: () => ContextMenuFn | undefined;
   getNodeClickFn: () => NodeClickFn | undefined;
+  getNodeHasDetailFn?: () => NodeHasDetailFn | undefined;
   onOpenContextMenu?: (entries: MenuEntry[], x: number, y: number) => void;
   onLiveMessage?: (message: string) => void;
 }
@@ -740,10 +744,23 @@ export class MindmapCore {
     inner.append('circle').attr('class', 'halo').attr('filter', 'url(#mm-glow)');
     inner.append('circle').attr('class', 'body').attr('cursor', 'pointer');
     inner.append('text')
+      .attr('class', 'label')
       .attr('text-anchor', 'middle')
       .attr('font-family', '"Inter", "Public Sans", "Segoe UI", system-ui, sans-serif')
       .attr('pointer-events', 'none');
     inner.append('circle').attr('class', 'badge').attr('r', 4).attr('pointer-events', 'none');
+    // Shares circle.badge's corner position deliberately: circle.badge only ever shows on
+    // nodes with children (collapsed-state), while getNodeHasDetailFn is expected to mark
+    // childless nodes -- the two never need the same corner at once.
+    // Left with no text content here -- applyNodeTheme sets it per-node from
+    // getNodeHasDetailFn. Leaving a static glyph character here would add it to every node's
+    // combined textContent even when invisible (opacity alone doesn't remove it), which broke
+    // exact-match locators like `hasText: /^Frontend$/` in the e2e suite.
+    inner.append('text')
+      .attr('class', 'detail-glyph')
+      .attr('text-anchor', 'middle')
+      .attr('dominant-baseline', 'central')
+      .attr('pointer-events', 'none');
 
     return nodeGroup;
   }
@@ -763,7 +780,7 @@ export class MindmapCore {
       .attr('stroke', (d) => this.strokeColorFor(d))
       .attr('stroke-width', 1.5);
 
-    selection.select<SVGTextElement>('text')
+    selection.select<SVGTextElement>('text.label')
       .text((d) => d.label)
       .attr('dy', (d) => nodeRadius(d) + 13)
       .attr('fill', this.tc.labelFill)
@@ -775,6 +792,14 @@ export class MindmapCore {
       .attr('cy', (d) => -nodeRadius(d))
       .attr('fill', this.tc.badgeFill)
       .attr('opacity', (d) => (d.collapsed ? 1 : 0));
+
+    const hasDetailFn = this.options.getNodeHasDetailFn?.();
+    selection.select<SVGTextElement>('text.detail-glyph')
+      .attr('x', (d) => nodeRadius(d))
+      .attr('y', (d) => -nodeRadius(d))
+      .attr('font-size', 11)
+      .attr('fill', this.tc.badgeFill)
+      .text((d) => (hasDetailFn?.(d.sourceNode) ? 'ⓘ' : ''));
   }
 
   private applyNodeAria(selection: d3.Selection<SVGGElement, D3GraphNode, SVGGElement, unknown>): void {
