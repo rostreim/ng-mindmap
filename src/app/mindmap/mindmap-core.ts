@@ -14,6 +14,8 @@ import {
   computeRadialPositions,
   computeVisibleGraph,
   cycleOutgoingEdge,
+  fontSizeFor,
+  labelHalfWidth,
   nodeRadius,
   resolveEntryNode,
 } from './mindmap-layout';
@@ -550,7 +552,7 @@ export class MindmapCore {
         .distance((d) => LINK_DISTANCE_BASE + (d.target.depth ?? 0) * LINK_DISTANCE_PER_DEPTH));
       this.simulation.force('charge', d3.forceManyBody().strength(CHARGE_STRENGTH));
       this.simulation.force('center', d3.forceCenter(0, 0));
-      this.simulation.force('collision', d3.forceCollide<D3GraphNode>((d) => nodeRadius(d) + COLLISION_PADDING));
+      this.simulation.force('collision', d3.forceCollide<D3GraphNode>((d) => nodeRadius(d) + labelHalfWidth(d) + COLLISION_PADDING));
       this.simulation.force('x', null);
       this.simulation.force('y', null);
       this.simulation.alpha(REDRAW_ALPHA).restart();
@@ -561,7 +563,7 @@ export class MindmapCore {
           .distance((d) => LINK_DISTANCE_BASE + (d.target.depth ?? 0) * LINK_DISTANCE_PER_DEPTH))
         .force('charge', d3.forceManyBody().strength(CHARGE_STRENGTH))
         .force('center', d3.forceCenter(0, 0))
-        .force('collision', d3.forceCollide<D3GraphNode>((d) => nodeRadius(d) + COLLISION_PADDING))
+        .force('collision', d3.forceCollide<D3GraphNode>((d) => nodeRadius(d) + labelHalfWidth(d) + COLLISION_PADDING))
         .alphaDecay(ALPHA_DECAY)
         .on('tick', () => this.tick());
     }
@@ -585,13 +587,13 @@ export class MindmapCore {
       this.simulation.force('center', null);
       this.simulation.force('x', d3.forceX<D3GraphNode>((d) => d.targetX ?? 0).strength(HYBRID_POSITION_STRENGTH));
       this.simulation.force('y', d3.forceY<D3GraphNode>((d) => d.targetY ?? 0).strength(HYBRID_POSITION_STRENGTH));
-      this.simulation.force('collision', d3.forceCollide<D3GraphNode>((d) => nodeRadius(d) + COLLISION_PADDING));
+      this.simulation.force('collision', d3.forceCollide<D3GraphNode>((d) => nodeRadius(d) + labelHalfWidth(d) + COLLISION_PADDING));
       this.simulation.alpha(HYBRID_ALPHA).restart();
     } else {
       this.simulation = d3.forceSimulation<D3GraphNode>(nodes)
         .force('x', d3.forceX<D3GraphNode>((d) => d.targetX ?? 0).strength(HYBRID_POSITION_STRENGTH))
         .force('y', d3.forceY<D3GraphNode>((d) => d.targetY ?? 0).strength(HYBRID_POSITION_STRENGTH))
-        .force('collision', d3.forceCollide<D3GraphNode>((d) => nodeRadius(d) + COLLISION_PADDING))
+        .force('collision', d3.forceCollide<D3GraphNode>((d) => nodeRadius(d) + labelHalfWidth(d) + COLLISION_PADDING))
         .alphaDecay(ALPHA_DECAY)
         .on('tick', () => this.tick());
     }
@@ -799,7 +801,7 @@ export class MindmapCore {
       .text((d) => d.label)
       .attr('dy', (d) => nodeRadius(d) + 13)
       .attr('fill', this.tc.labelFill)
-      .attr('font-size', (d) => (d.depth === 0 ? 13 : 11))
+      .attr('font-size', (d) => fontSizeFor(d))
       .attr('font-weight', (d) => (d.depth === 0 ? '600' : '400'));
 
     selection.select<SVGCircleElement>('circle.badge')

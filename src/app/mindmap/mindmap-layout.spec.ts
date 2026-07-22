@@ -5,6 +5,8 @@ import {
   computeRadialPositions,
   computeVisibleGraph,
   cycleOutgoingEdge,
+  fontSizeFor,
+  labelHalfWidth,
   NODE_RADII,
   nodeRadius,
   resolveEntryNode,
@@ -345,6 +347,38 @@ describe('nodeRadius', () => {
   it('clamps to the last NODE_RADII entry for a depth deeper than the table', () => {
     const node = { depth: 99 } as D3GraphNode;
     expect(nodeRadius(node)).toBe(NODE_RADII[NODE_RADII.length - 1]);
+  });
+});
+
+describe('fontSizeFor', () => {
+  it('returns 13 for a node at depth 0', () => {
+    expect(fontSizeFor({ depth: 0 })).toBe(13);
+  });
+
+  it('returns 11 for a node with any other depth', () => {
+    expect(fontSizeFor({ depth: 2 })).toBe(11);
+  });
+
+  it('returns 11 for a node with an undefined depth', () => {
+    expect(fontSizeFor({ depth: undefined })).toBe(11);
+  });
+});
+
+describe('labelHalfWidth', () => {
+  it('returns 0 for an empty label', () => {
+    expect(labelHalfWidth({ label: '', depth: 0 })).toBe(0);
+  });
+
+  it('scales with label length', () => {
+    const short = labelHalfWidth({ label: 'Elm St', depth: 1 });
+    const long = labelHalfWidth({ label: 'Country Club Drive', depth: 1 });
+    expect(long).toBeGreaterThan(short);
+  });
+
+  it('is larger at depth 0 than elsewhere for the same label, since the root font is bigger', () => {
+    const rootWidth = labelHalfWidth({ label: 'Example Rd', depth: 0 });
+    const otherWidth = labelHalfWidth({ label: 'Example Rd', depth: 1 });
+    expect(rootWidth).toBeGreaterThan(otherWidth);
   });
 });
 
