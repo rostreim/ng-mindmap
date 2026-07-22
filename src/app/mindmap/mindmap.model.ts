@@ -24,7 +24,10 @@ export interface MindmapGraph {
 export interface D3GraphNode extends SimulationNodeDatum {
   id: string;
   label: string;
-  /** BFS distance from the tree root; only set when classifyShape() === 'tree'. Undefined for graph-shaped data. */
+  /** BFS distance from its connected component's own zero-indegree root -- computed
+   * regardless of classifyShape()'s tree/graph classification, so a forest of several
+   * disconnected trees gets meaningful per-component depth too. Undefined only for a
+   * node unreachable from any zero-indegree root (e.g. inside a pure cycle). */
   depth?: number;
   collapsed: boolean;
   sourceNode: MindmapGraphNode;
