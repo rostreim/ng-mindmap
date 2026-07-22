@@ -751,7 +751,8 @@ export class MindmapCore {
     inner.append('circle').attr('class', 'badge').attr('r', 4).attr('pointer-events', 'none');
     // Shares circle.badge's corner position deliberately: circle.badge only ever shows on
     // nodes with children (collapsed-state), while getNodeHasDetailFn is expected to mark
-    // childless nodes -- the two never need the same corner at once.
+    // childless nodes. applyNodeTheme enforces this instead of just relying on convention --
+    // see the hasChildren guard there.
     // Left with no text content here -- applyNodeTheme sets it per-node from
     // getNodeHasDetailFn. Leaving a static glyph character here would add it to every node's
     // combined textContent even when invisible (opacity alone doesn't remove it), which broke
@@ -793,13 +794,17 @@ export class MindmapCore {
       .attr('fill', this.tc.badgeFill)
       .attr('opacity', (d) => (d.collapsed ? 1 : 0));
 
+    // Enforced here, not just documented: a node with outgoing edges always uses this corner
+    // for circle.badge's collapsed-state indicator, so the glyph is suppressed regardless of
+    // what getNodeHasDetailFn returns for it -- a careless consumer can't make the two overlap.
     const hasDetailFn = this.options.getNodeHasDetailFn?.();
+    const hasChildren = (d: D3GraphNode) => this.allEdges.some((e) => e.source.id === d.id);
     selection.select<SVGTextElement>('text.detail-glyph')
       .attr('x', (d) => nodeRadius(d))
       .attr('y', (d) => -nodeRadius(d))
       .attr('font-size', 11)
       .attr('fill', this.tc.badgeFill)
-      .text((d) => (hasDetailFn?.(d.sourceNode) ? 'ⓘ' : ''));
+      .text((d) => (!hasChildren(d) && hasDetailFn?.(d.sourceNode) ? 'ⓘ' : ''));
   }
 
   private applyNodeAria(selection: d3.Selection<SVGGElement, D3GraphNode, SVGGElement, unknown>): void {

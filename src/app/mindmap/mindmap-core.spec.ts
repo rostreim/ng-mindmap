@@ -121,6 +121,19 @@ describe('MindmapCore', () => {
 
       expect(glyphText('a1')).toBe('');
     });
+
+    it('suppresses the glyph on a node with children even if getNodeHasDetailFn returns true for it', () => {
+      // 'a' has children (a1, a2) -- circle.badge owns this corner for 'a', regardless of
+      // what a (careless or buggy) getNodeHasDetailFn implementation returns for it.
+      core = createDetachedCore(sampleGraph, {
+        getNodeHasDetailFn: () => () => true,
+      });
+
+      (core as any).render();
+
+      expect(glyphText('a')).toBe('');
+      expect(glyphText('a1')).toBe('ⓘ');
+    });
   });
 
   describe('layout-mode gating', () => {
