@@ -51,3 +51,6 @@ export type ContextMenuFn = (node: MindmapGraphNode) => Promise<MenuEntry[]>;
 
 // Return true to suppress the default collapse/expand behaviour.
 export type NodeClickFn = (node: MindmapGraphNode) => boolean | void;
+
+// Return true to show the "has detail" glyph on this node.
+export type NodeHasDetailFn = (node: MindmapGraphNode) => boolean;

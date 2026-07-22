@@ -94,6 +94,48 @@ describe('MindmapCore', () => {
     });
   });
 
+  describe('detail-glyph rendering', () => {
+    function glyphText(id: string): string {
+      return (core as any).g.select('.nodes').selectAll('g.node')
+        .filter((d: D3GraphNode) => d.id === id)
+        .select('text.detail-glyph')
+        .text();
+    }
+
+    it('renders the glyph character only for nodes where getNodeHasDetailFn returns true', () => {
+      core = createDetachedCore(sampleGraph, {
+        getNodeHasDetailFn: () => (node) => node.id === 'a1',
+      });
+
+      (core as any).render();
+
+      expect(glyphText('a1')).toBe('ⓘ');
+      expect(glyphText('a2')).toBe('');
+      expect(glyphText('root')).toBe('');
+    });
+
+    it('leaves the glyph text empty on every node when getNodeHasDetailFn is omitted', () => {
+      core = createDetachedCore(sampleGraph);
+
+      expect(() => (core as any).render()).not.toThrow();
+
+      expect(glyphText('a1')).toBe('');
+    });
+
+    it('suppresses the glyph on a node with children even if getNodeHasDetailFn returns true for it', () => {
+      // 'a' has children (a1, a2) -- circle.badge owns this corner for 'a', regardless of
+      // what a (careless or buggy) getNodeHasDetailFn implementation returns for it.
+      core = createDetachedCore(sampleGraph, {
+        getNodeHasDetailFn: () => () => true,
+      });
+
+      (core as any).render();
+
+      expect(glyphText('a')).toBe('');
+      expect(glyphText('a1')).toBe('ⓘ');
+    });
+  });
+
   describe('layout-mode gating', () => {
     it('falls back to force with a console.warn when layoutMode is radial on graph-shaped data', () => {
       const dagGraph: MindmapGraph = {
