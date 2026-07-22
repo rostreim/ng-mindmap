@@ -94,6 +94,68 @@ describe('MindmapCore', () => {
     });
   });
 
+  describe('depth computation (per connected component)', () => {
+    it('computes tree depth as before for single-root data', () => {
+      core = createDetachedCore(sampleGraph);
+      vi.spyOn(core as any, 'redraw').mockImplementation(() => {});
+
+      (core as any).render();
+
+      const byId = new Map((core as any).allNodes.map((n: D3GraphNode) => [n.id, n.depth]));
+      expect(byId.get('root')).toBe(0);
+      expect(byId.get('a')).toBe(1);
+      expect(byId.get('b')).toBe(1);
+      expect(byId.get('a1')).toBe(2);
+      expect(byId.get('a2')).toBe(2);
+    });
+
+    it('computes depth per-component for a forest of disconnected trees', () => {
+      const forest: MindmapGraph = {
+        nodes: [
+          { id: 's1', label: 'Street 1' },
+          { id: 's1-r1', label: 'Req 1' },
+          { id: 's2', label: 'Street 2' },
+          { id: 's2-r1', label: 'Req 1' },
+          { id: 's2-r2', label: 'Req 2' },
+        ],
+        edges: [
+          { source: 's1', target: 's1-r1' },
+          { source: 's2', target: 's2-r1' },
+          { source: 's2', target: 's2-r2' },
+        ],
+      };
+      core = createDetachedCore(forest);
+      vi.spyOn(core as any, 'redraw').mockImplementation(() => {});
+
+      (core as any).render();
+
+      const byId = new Map((core as any).allNodes.map((n: D3GraphNode) => [n.id, n.depth]));
+      expect(byId.get('s1')).toBe(0);
+      expect(byId.get('s1-r1')).toBe(1);
+      expect(byId.get('s2')).toBe(0);
+      expect(byId.get('s2-r1')).toBe(1);
+      expect(byId.get('s2-r2')).toBe(1);
+    });
+
+    it('leaves depth undefined for a node unreachable from any root (a pure cycle)', () => {
+      const cyclic: MindmapGraph = {
+        nodes: [{ id: 'x', label: 'X' }, { id: 'y', label: 'Y' }],
+        edges: [
+          { source: 'x', target: 'y' },
+          { source: 'y', target: 'x' },
+        ],
+      };
+      core = createDetachedCore(cyclic);
+      vi.spyOn(core as any, 'redraw').mockImplementation(() => {});
+
+      (core as any).render();
+
+      const byId = new Map((core as any).allNodes.map((n: D3GraphNode) => [n.id, n.depth]));
+      expect(byId.get('x')).toBeUndefined();
+      expect(byId.get('y')).toBeUndefined();
+    });
+  });
+
   describe('detail-glyph rendering', () => {
     function glyphText(id: string): string {
       return (core as any).g.select('.nodes').selectAll('g.node')

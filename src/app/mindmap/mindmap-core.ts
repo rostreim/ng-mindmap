@@ -497,20 +497,33 @@ export class MindmapCore {
     this.arrivedVia.clear();
     this.focusedNodeId = this.entryNode?.id ?? null;
 
-    if (this.shape === 'tree' && this.structuralRoot) {
-      const depthById = new Map<string, number>([[this.structuralRoot.id, 0]]);
-      const stack = [this.structuralRoot];
+    // Depth is computed per connected component, independent of this.shape --
+    // a forest of many disconnected trees (classified 'graph' overall, since
+    // classifyShape requires exactly one root to call something 'tree') still
+    // gets meaningful per-node depth this way, so depth-driven styling (color,
+    // font size, stroke, aria-level, link distance) works sensibly for it too.
+    // Only nodes unreachable from any zero-indegree root (a node inside a pure
+    // cycle with no external entry point) keep depth undefined, same fallback
+    // as before this change.
+    const depthById = new Map<string, number>();
+    const hasIncoming = new Set(this.allEdges.map((e) => e.target.id));
+    const visited = new Set<string>();
+    for (const root of this.allNodes.filter((n) => !hasIncoming.has(n.id))) {
+      if (visited.has(root.id)) continue;
+      depthById.set(root.id, 0);
+      visited.add(root.id);
+      const stack = [root];
       while (stack.length) {
         const n = stack.pop()!;
         for (const e of this.allEdges.filter((edge) => edge.source.id === n.id)) {
+          if (visited.has(e.target.id)) continue;
           depthById.set(e.target.id, (depthById.get(n.id) ?? 0) + 1);
+          visited.add(e.target.id);
           stack.push(e.target);
         }
       }
-      for (const n of this.allNodes) n.depth = depthById.get(n.id);
-    } else {
-      for (const n of this.allNodes) n.depth = undefined;
     }
+    for (const n of this.allNodes) n.depth = depthById.get(n.id);
 
     this.redraw();
   }
