@@ -187,6 +187,7 @@ export class MindmapCore {
   }
 
   setData(data: MindmapGraph): void {
+    this.highlightedOutgoingEdgeId = null;
     this.data = data;
     this.render();
   }
@@ -546,6 +547,12 @@ export class MindmapCore {
     this.svg.attr('role', this.shape === 'tree' ? 'tree' : 'application');
     const { visibleNodes, visibleEdges } = computeVisibleGraph(this.allNodes, this.allEdges, this.options.getCollapseMode());
     this.visibleNodes = visibleNodes;
+    if (
+      this.highlightedOutgoingEdgeId
+      && !visibleEdges.some((edge) => edge.id === this.highlightedOutgoingEdgeId)
+    ) {
+      this.highlightedOutgoingEdgeId = null;
+    }
 
     let effectiveLayoutMode = this.layoutMode;
     if (effectiveLayoutMode !== 'force' && this.shape === 'graph') {
@@ -767,6 +774,7 @@ export class MindmapCore {
         this.openContextMenu(d, event.clientX, event.clientY);
       })
       .on('mouseover', (_event, d) => {
+        this.highlightedOutgoingEdgeId = null;
         this.hoveredNodeId = d.id;
         this.applyInteractionStyles();
       })

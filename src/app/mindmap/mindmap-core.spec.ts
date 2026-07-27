@@ -314,6 +314,7 @@ describe('MindmapCore', () => {
       (node: MindmapGraphNode) => node.metadata?.['kind'] === 'request_fact';
     let transitionSpy: ReturnType<typeof vi.spyOn>;
     let transitionDurations: number[];
+    let transitionNames: (string | undefined)[];
 
     function nodeSelection(id: string): d3.Selection<SVGGElement, D3GraphNode, SVGGElement, unknown> {
       const graph = (core as any).g as d3.Selection<SVGGElement, unknown, null, undefined>;
@@ -350,8 +351,13 @@ describe('MindmapCore', () => {
     beforeEach(() => {
       vi.useFakeTimers();
       transitionDurations = [];
+      transitionNames = [];
       transitionSpy = vi.spyOn(d3.selection.prototype, 'transition')
-        .mockImplementation(function (this: d3.Selection<d3.BaseType, unknown, null, undefined>) {
+        .mockImplementation(function (
+          this: d3.Selection<d3.BaseType, unknown, null, undefined>,
+          ...args: unknown[]
+        ) {
+          transitionNames.push(typeof args[0] === 'string' ? args[0] : undefined);
           return {
             duration: (duration: number) => {
               transitionDurations.push(duration);
@@ -506,6 +512,63 @@ describe('MindmapCore', () => {
       expect(edgeAttr('root->fact', 'stroke-width')).toBe('2');
       expect(edgeAttr('root->fact', 'stroke')).toBe('#7c6af7');
       expect(edgeAttr('root->attachment', 'stroke-opacity')).toBe('0.08');
+    });
+
+    it('lets pointer hover take over after keyboard edge navigation', () => {
+      const root = (core as any).allNodes.find((node: D3GraphNode) => node.id === 'root');
+      const fact = nodeSelection('fact').node()!;
+      (core as any).shape = 'graph';
+      core.setNodeEmphasis(factPredicate);
+      (core as any).onNodeKeydown({ key: 'ArrowDown', preventDefault: () => {} } as KeyboardEvent, root);
+
+      fact.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+      vi.advanceTimersByTime(150);
+
+      expect((core as any).highlightedOutgoingEdgeId).toBeNull();
+      expect(edgeAttr('root->fact', 'stroke-opacity')).toBe('1');
+      expect(edgeAttr('root->fact', 'stroke-width')).toBe('2');
+      expect(edgeAttr('root->fact', 'stroke')).toBe('#2e8b57');
+      expect(edgeAttr('root->attachment', 'stroke-opacity')).toBe('0.08');
+    });
+
+    it('clears keyboard edge navigation when data changes', () => {
+      const root = (core as any).allNodes.find((node: D3GraphNode) => node.id === 'root');
+      (core as any).shape = 'graph';
+      core.setNodeEmphasis(factPredicate);
+      (core as any).onNodeKeydown({ key: 'ArrowDown', preventDefault: () => {} } as KeyboardEvent, root);
+
+      core.setData({ ...emphasisGraph });
+
+      expect((core as any).highlightedOutgoingEdgeId).toBeNull();
+      expect(edgeAttr('root->fact', 'stroke-opacity')).toBe(String((core as any).tc.edgeOpacity));
+      expect(edgeAttr('root->attachment', 'stroke-opacity')).toBe('0.08');
+    });
+
+    it('does not restore a keyboard edge highlight after that edge disappears and returns', () => {
+      const root = (core as any).allNodes.find((node: D3GraphNode) => node.id === 'root');
+      (core as any).shape = 'graph';
+      core.setNodeEmphasis(factPredicate);
+      (core as any).onNodeKeydown({ key: 'ArrowDown', preventDefault: () => {} } as KeyboardEvent, root);
+
+      (core as any).toggleCollapse(root);
+      expect((core as any).highlightedOutgoingEdgeId).toBeNull();
+      (core as any).toggleCollapse(root);
+
+      expect(edgeAttr('root->fact', 'stroke-opacity')).toBe(String((core as any).tc.edgeOpacity));
+      expect(edgeAttr('root->attachment', 'stroke-opacity')).toBe('0.08');
+    });
+
+    it('uses named zero-duration interaction transitions for reduced-motion keyboard navigation', () => {
+      const root = (core as any).allNodes.find((node: D3GraphNode) => node.id === 'root');
+      (core as any).shape = 'graph';
+      vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
+      transitionDurations = [];
+      transitionNames = [];
+
+      (core as any).onNodeKeydown({ key: 'ArrowDown', preventDefault: () => {} } as KeyboardEvent, root);
+
+      expect(transitionNames).toEqual(['interaction', 'interaction']);
+      expect(transitionDurations).toEqual([0, 0]);
     });
 
     it('retains existing hover behavior when no emphasis predicate is active', () => {
