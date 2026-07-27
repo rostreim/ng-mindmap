@@ -142,6 +142,7 @@ export class MindmapCore {
   private linksByNode = new Map<string, D3GraphEdge[]>();
   private nodeEmphasisFn: NodeEmphasisFn | undefined;
   private hoveredNodeId: string | null = null;
+  private highlightedOutgoingEdgeId: string | null = null;
 
   private menuOpenerNodeId: string | null = null;
 
@@ -421,16 +422,18 @@ export class MindmapCore {
     switch (event.key) {
       case 'ArrowDown': {
         event.preventDefault();
-        const { index } = cycleOutgoingEdge(d, this.allEdges, this.outgoingCursor.get(d.id) ?? 0, 1);
+        const { index, edge } = cycleOutgoingEdge(d, this.allEdges, this.outgoingCursor.get(d.id) ?? 0, 1);
         this.outgoingCursor.set(d.id, index);
-        this.highlightOutgoingCursor(d);
+        this.highlightedOutgoingEdgeId = edge?.id ?? null;
+        this.applyInteractionStyles();
         break;
       }
       case 'ArrowUp': {
         event.preventDefault();
-        const { index } = cycleOutgoingEdge(d, this.allEdges, this.outgoingCursor.get(d.id) ?? 0, -1);
+        const { index, edge } = cycleOutgoingEdge(d, this.allEdges, this.outgoingCursor.get(d.id) ?? 0, -1);
         this.outgoingCursor.set(d.id, index);
-        this.highlightOutgoingCursor(d);
+        this.highlightedOutgoingEdgeId = edge?.id ?? null;
+        this.applyInteractionStyles();
         break;
       }
       case 'ArrowRight': {
@@ -482,15 +485,6 @@ export class MindmapCore {
         break;
       }
     }
-  }
-
-  private highlightOutgoingCursor(node: D3GraphNode): void {
-    const { edge } = cycleOutgoingEdge(node, this.allEdges, (this.outgoingCursor.get(node.id) ?? 0) - 1, 1);
-    this.g.select('.links').selectAll<SVGLineElement, D3GraphEdge>('line')
-      .transition().duration(HOVER_TRANSITION_MS)
-      .attr('stroke-opacity', (link) => (link.id === edge?.id ? 1 : 0.15))
-      .attr('stroke-width', (link) => (link.id === edge?.id ? 2 : 1.5))
-      .attr('stroke', (link) => (link.id === edge?.id ? this.colorScale(0) : this.tc.edgeStroke));
   }
 
   // ── Render / re-render ─────────────────────────────────────────────────────
@@ -834,6 +828,7 @@ export class MindmapCore {
     const incidentEdges = this.hoveredNodeId
       ? new Set(this.linksByNode.get(this.hoveredNodeId) ?? [])
       : undefined;
+    const navigationEdgeId = this.highlightedOutgoingEdgeId;
     const duration = durationOverride ?? (this.prefersReducedMotion() ? 0 : HOVER_TRANSITION_MS);
 
     this.g.select<SVGGElement>('.nodes')
@@ -849,6 +844,7 @@ export class MindmapCore {
           || matchingIds.has(edge.source.id)
           || matchingIds.has(edge.target.id);
         if (!included) return 0.08;
+        if (navigationEdgeId) return edge.id === navigationEdgeId ? 1 : 0.15;
         if (!incidentEdges) return this.tc.edgeOpacity;
         return incidentEdges.has(edge) ? 1 : 0.15;
       })
@@ -856,12 +852,13 @@ export class MindmapCore {
         const included = !emphasisActive
           || matchingIds.has(edge.source.id)
           || matchingIds.has(edge.target.id);
-        return included && incidentEdges?.has(edge) ? 2 : 1.5;
+        return included && (edge.id === navigationEdgeId || incidentEdges?.has(edge)) ? 2 : 1.5;
       })
       .attr('stroke', (edge) => {
         const included = !emphasisActive
           || matchingIds.has(edge.source.id)
           || matchingIds.has(edge.target.id);
+        if (included && edge.id === navigationEdgeId) return this.colorScale(0);
         return included && hoveredNode && incidentEdges?.has(edge)
           ? this.nodeColorFor(hoveredNode)
           : this.tc.edgeStroke;

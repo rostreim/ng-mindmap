@@ -487,6 +487,27 @@ describe('MindmapCore', () => {
       expect(edgeAttr('root->fact', 'stroke-opacity')).toBe('0.15');
     });
 
+    it('keeps excluded edges dim while ArrowDown and ArrowUp change the outgoing edge cursor', () => {
+      const root = (core as any).allNodes.find((node: D3GraphNode) => node.id === 'root');
+      (core as any).shape = 'graph';
+      core.setNodeEmphasis(factPredicate);
+
+      (core as any).onNodeKeydown({ key: 'ArrowDown', preventDefault: () => {} } as KeyboardEvent, root);
+      vi.advanceTimersByTime(150);
+
+      expect(edgeAttr('root->attachment', 'stroke-opacity')).toBe('0.08');
+      expect(edgeAttr('root->attachment', 'stroke-width')).toBe('1.5');
+      expect(edgeAttr('root->fact', 'stroke-opacity')).toBe('0.15');
+
+      (core as any).onNodeKeydown({ key: 'ArrowUp', preventDefault: () => {} } as KeyboardEvent, root);
+      vi.advanceTimersByTime(150);
+
+      expect(edgeAttr('root->fact', 'stroke-opacity')).toBe('1');
+      expect(edgeAttr('root->fact', 'stroke-width')).toBe('2');
+      expect(edgeAttr('root->fact', 'stroke')).toBe('#7c6af7');
+      expect(edgeAttr('root->attachment', 'stroke-opacity')).toBe('0.08');
+    });
+
     it('retains existing hover behavior when no emphasis predicate is active', () => {
       const fact = nodeSelection('fact').node()!;
 
