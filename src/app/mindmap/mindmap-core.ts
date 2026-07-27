@@ -8,6 +8,7 @@ import {
   NodeClickFn,
   NodeHasDetailFn,
   NodeColorFn,
+  NodeEmphasisFn,
 } from './mindmap.model';
 import {
   buildGraph,
@@ -139,6 +140,8 @@ export class MindmapCore {
   private outgoingCursor = new Map<string, number>();
   private arrivedVia = new Map<string, string>();
   private linksByNode = new Map<string, D3GraphEdge[]>();
+  private nodeEmphasisFn: NodeEmphasisFn | undefined;
+  private hoveredNodeId: string | null = null;
 
   private menuOpenerNodeId: string | null = null;
 
@@ -185,6 +188,11 @@ export class MindmapCore {
   setData(data: MindmapGraph): void {
     this.data = data;
     this.render();
+  }
+
+  setNodeEmphasis(predicate: NodeEmphasisFn | undefined): void {
+    this.nodeEmphasisFn = predicate;
+    this.applyInteractionStyles();
   }
 
   notifyMenuClosed(reason: ContextMenuCloseReason): void {
@@ -555,15 +563,16 @@ export class MindmapCore {
 
     if (effectiveLayoutMode === 'force') {
       this.syncForceSimulation(visibleNodes, visibleEdges);
-      return;
+    } else {
+      computeRadialPositions(this.structuralRoot!, visibleNodes, visibleEdges);
+      if (effectiveLayoutMode === 'hybrid') {
+        this.syncHybridSimulation(visibleNodes, visibleEdges);
+      } else {
+        this.syncRadialLayout(visibleNodes, visibleEdges);
+      }
     }
 
-    computeRadialPositions(this.structuralRoot!, visibleNodes, visibleEdges);
-    if (effectiveLayoutMode === 'hybrid') {
-      this.syncHybridSimulation(visibleNodes, visibleEdges);
-    } else {
-      this.syncRadialLayout(visibleNodes, visibleEdges);
-    }
+    this.applyInteractionStyles(0);
   }
 
   private syncForceSimulation(nodes: D3GraphNode[], links: D3GraphEdge[]): void {
@@ -764,19 +773,12 @@ export class MindmapCore {
         this.openContextMenu(d, event.clientX, event.clientY);
       })
       .on('mouseover', (_event, d) => {
-        const incident = new Set(this.linksByNode.get(d.id));
-        this.g.select('.links').selectAll<SVGLineElement, D3GraphEdge>('line')
-          .transition().duration(HOVER_TRANSITION_MS)
-          .attr('stroke-opacity', (link) => (incident.has(link) ? 1 : 0.15))
-          .attr('stroke-width', (link) => (incident.has(link) ? 2 : 1.5))
-          .attr('stroke', (link) => (incident.has(link) ? this.nodeColorFor(d) : this.tc.edgeStroke));
+        this.hoveredNodeId = d.id;
+        this.applyInteractionStyles();
       })
       .on('mouseout', () => {
-        this.g.select('.links').selectAll<SVGLineElement, D3GraphEdge>('line')
-          .transition().duration(HOVER_TRANSITION_MS)
-          .attr('stroke-opacity', this.tc.edgeOpacity)
-          .attr('stroke-width', 1.5)
-          .attr('stroke', this.tc.edgeStroke);
+        this.hoveredNodeId = null;
+        this.applyInteractionStyles();
       })
       .on('keydown', (event: KeyboardEvent, d: D3GraphNode) => this.onNodeKeydown(event, d));
 
@@ -804,6 +806,66 @@ export class MindmapCore {
       .attr('pointer-events', 'none');
 
     return nodeGroup;
+  }
+
+  private matchesEmphasis(node: D3GraphNode): boolean {
+    if (!this.nodeEmphasisFn) return true;
+    try {
+      return this.nodeEmphasisFn(node.sourceNode);
+    } catch {
+      return false;
+    }
+  }
+
+  private applyInteractionStyles(durationOverride?: number): void {
+    if (!this.g) return;
+
+    if (this.hoveredNodeId && !this.visibleNodes.some((node) => node.id === this.hoveredNodeId)) {
+      this.hoveredNodeId = null;
+    }
+
+    const emphasisActive = this.nodeEmphasisFn !== undefined;
+    const matchingIds = new Set(
+      this.visibleNodes.filter((node) => this.matchesEmphasis(node)).map((node) => node.id),
+    );
+    const hoveredNode = this.hoveredNodeId
+      ? this.visibleNodes.find((node) => node.id === this.hoveredNodeId)
+      : undefined;
+    const incidentEdges = this.hoveredNodeId
+      ? new Set(this.linksByNode.get(this.hoveredNodeId) ?? [])
+      : undefined;
+    const duration = durationOverride ?? (this.prefersReducedMotion() ? 0 : HOVER_TRANSITION_MS);
+
+    this.g.select<SVGGElement>('.nodes')
+      .selectAll<SVGGElement, D3GraphNode>('g.node')
+      .transition('interaction').duration(duration)
+      .attr('opacity', (node) => (!emphasisActive || matchingIds.has(node.id) ? 1 : 0.15));
+
+    this.g.select<SVGGElement>('.links')
+      .selectAll<SVGLineElement, D3GraphEdge>('line')
+      .transition('interaction').duration(duration)
+      .attr('stroke-opacity', (edge) => {
+        const included = !emphasisActive
+          || matchingIds.has(edge.source.id)
+          || matchingIds.has(edge.target.id);
+        if (!included) return 0.08;
+        if (!incidentEdges) return this.tc.edgeOpacity;
+        return incidentEdges.has(edge) ? 1 : 0.15;
+      })
+      .attr('stroke-width', (edge) => {
+        const included = !emphasisActive
+          || matchingIds.has(edge.source.id)
+          || matchingIds.has(edge.target.id);
+        return included && incidentEdges?.has(edge) ? 2 : 1.5;
+      })
+      .attr('stroke', (edge) => {
+        const included = !emphasisActive
+          || matchingIds.has(edge.source.id)
+          || matchingIds.has(edge.target.id);
+        return included && hoveredNode && incidentEdges?.has(edge)
+          ? this.nodeColorFor(hoveredNode)
+          : this.tc.edgeStroke;
+      });
   }
 
   private applyNodeTheme(selection: d3.Selection<SVGGElement, D3GraphNode, SVGGElement, unknown>): void {

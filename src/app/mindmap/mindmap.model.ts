@@ -9,6 +9,7 @@ export interface MindmapGraphNode {
 }
 
 export type NodeColorFn = (node: MindmapGraphNode) => string | undefined;
+export type NodeEmphasisFn = (node: MindmapGraphNode) => boolean;
 
 export interface MindmapGraphEdge {
   /** Defaults to `${source}->${target}` if omitted — see buildGraph(). */
