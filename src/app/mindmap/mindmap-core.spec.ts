@@ -214,11 +214,12 @@ describe('MindmapCore', () => {
       const node = (core as any).g.select('g.node');
       expect(node.select('circle.body').attr('fill')).toBe('#e46632');
       expect(node.select('circle.halo').attr('stroke')).toBe('#e46632');
-      expect(node.select('circle.body').attr('stroke')).not.toBe('#e46632');
+      expect(node.select('circle.body').attr('stroke')).toBe('#ff7e3e');
     });
 
     const fallbackCallbacks: [string, NodeColorFn | undefined][] = [
       ['missing', undefined],
+      ['undefined-returning', () => undefined],
       ['invalid', () => 'not-a-color'],
       ['throwing', () => { throw new Error('consumer failure'); }],
     ];
@@ -229,6 +230,28 @@ describe('MindmapCore', () => {
       });
       (core as any).render();
       expect((core as any).g.select('g.node circle.body').attr('fill')).toBe('#7c6af7');
+    });
+
+    it('keeps a callback color after setData and setTheme redraws', () => {
+      const graph: MindmapGraph = {
+        nodes: [{ id: 'root', label: 'Root', metadata: { kind: 'arc_request' } }],
+        edges: [],
+      };
+      core = createDetachedCore(graph, {
+        getNodeColorFn: () => (node) =>
+          node.metadata?.['kind'] === 'arc_request' ? '#E46632' : undefined,
+      });
+
+      (core as any).render();
+      core.setData({
+        ...graph,
+        nodes: [{ ...graph.nodes[0], label: 'Renamed root' }],
+      });
+      core.setTheme('light');
+
+      const node = (core as any).g.select('g.node');
+      expect(node.select('circle.body').attr('fill')).toBe('#e46632');
+      expect(node.select('circle.halo').attr('stroke')).toBe('#e46632');
     });
 
     it('uses the callback color for incident links on hover', () => {
