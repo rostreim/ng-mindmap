@@ -7,6 +7,7 @@ import {
   ContextMenuFn,
   NodeClickFn,
   NodeHasDetailFn,
+  NodeColorFn,
 } from './mindmap.model';
 import {
   buildGraph,
@@ -88,8 +89,8 @@ const THEMES: Record<MindmapTheme, ThemeConfig> = {
  * behavior, where these four inputs are read directly via signal-function-calls at point of
  * use with no watching effect (see CLAUDE.md's note on collapseMode having "no dedicated
  * reactive trigger of its own" -- the same was true pre-extraction for the other three).
- * getNodeHasDetailFn is optional (no existing consumer -- e.g. the Angular wrapper -- is
- * required to provide it) and follows the same live-read-getter convention.
+ * getNodeHasDetailFn/getNodeColorFn are optional (no existing consumer -- e.g. the Angular
+ * wrapper -- is required to provide either) and follow the same live-read-getter convention.
  */
 export interface MindmapCoreOptions {
   width: number;
@@ -102,6 +103,7 @@ export interface MindmapCoreOptions {
   getContextMenuFn: () => ContextMenuFn | undefined;
   getNodeClickFn: () => NodeClickFn | undefined;
   getNodeHasDetailFn?: () => NodeHasDetailFn | undefined;
+  getNodeColorFn?: () => NodeColorFn | undefined;
   onOpenContextMenu?: (entries: MenuEntry[], x: number, y: number) => void;
   onLiveMessage?: (message: string) => void;
 }
@@ -132,7 +134,6 @@ export class MindmapCore {
   private structuralRoot: D3GraphNode | null = null;
 
   private colorScale!: d3.ScaleOrdinal<number, string>;
-  private strokeColorByDepth: string[] = [];
   private visibleNodes: D3GraphNode[] = [];
   private focusedNodeId: string | null = null;
   private outgoingCursor = new Map<string, number>();
@@ -300,14 +301,24 @@ export class MindmapCore {
     this.colorScale = d3.scaleOrdinal<number, string>()
       .domain([0, 1, 2, 3, 4, 5])
       .range(this.tc.nodeColors);
+  }
 
-    const brighterBy = this.theme === 'light' ? 0.4 : 0.6;
-    this.strokeColorByDepth = this.tc.nodeColors.map((color) =>
-      (d3.color(color) as d3.RGBColor).brighter(brighterBy).formatHex());
+  private nodeColorFor(d: D3GraphNode): string {
+    try {
+      const requested = this.options.getNodeColorFn?.()?.(d.sourceNode);
+      const parsed = requested ? d3.color(requested) : null;
+      if (parsed) return parsed.formatHex();
+    } catch {
+      // Consumer callbacks are optional decoration; retain deterministic fallback.
+    }
+    return this.colorScale(d.depth ?? 0);
   }
 
   private strokeColorFor(d: D3GraphNode): string {
-    return this.strokeColorByDepth[(d.depth ?? 0) % this.strokeColorByDepth.length];
+    const brighterBy = this.theme === 'light' ? 0.4 : 0.6;
+    return (d3.color(this.nodeColorFor(d)) as d3.RGBColor)
+      .brighter(brighterBy)
+      .formatHex();
   }
 
   private applyTabindex(selection: d3.Selection<SVGGElement, D3GraphNode, SVGGElement, unknown>): void {
@@ -758,7 +769,7 @@ export class MindmapCore {
           .transition().duration(HOVER_TRANSITION_MS)
           .attr('stroke-opacity', (link) => (incident.has(link) ? 1 : 0.15))
           .attr('stroke-width', (link) => (incident.has(link) ? 2 : 1.5))
-          .attr('stroke', (link) => (incident.has(link) ? this.colorScale(d.depth ?? 0) : this.tc.edgeStroke));
+          .attr('stroke', (link) => (incident.has(link) ? this.nodeColorFor(d) : this.tc.edgeStroke));
       })
       .on('mouseout', () => {
         this.g.select('.links').selectAll<SVGLineElement, D3GraphEdge>('line')
@@ -799,13 +810,13 @@ export class MindmapCore {
     selection.select<SVGCircleElement>('circle.halo')
       .attr('r', (d) => nodeRadius(d) + 5)
       .attr('fill', 'none')
-      .attr('stroke', (d) => this.colorScale(d.depth ?? 0))
+      .attr('stroke', (d) => this.nodeColorFor(d))
       .attr('stroke-opacity', this.tc.haloOpacity)
       .attr('stroke-width', 7);
 
     selection.select<SVGCircleElement>('circle.body')
       .attr('r', (d) => nodeRadius(d))
-      .attr('fill', (d) => this.colorScale(d.depth ?? 0))
+      .attr('fill', (d) => this.nodeColorFor(d))
       .attr('fill-opacity', this.theme === 'light' ? 1 : 0.92)
       .attr('stroke', (d) => this.strokeColorFor(d))
       .attr('stroke-width', 1.5);
