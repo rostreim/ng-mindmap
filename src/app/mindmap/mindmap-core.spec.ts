@@ -1,6 +1,6 @@
 import * as d3 from 'd3';
 import { MindmapCore, MindmapCoreOptions } from './mindmap-core';
-import { D3GraphNode, MindmapGraph } from './mindmap.model';
+import { D3GraphNode, MindmapGraph, NodeColorFn } from './mindmap.model';
 
 describe('MindmapCore', () => {
   let core: MindmapCore;
@@ -195,6 +195,98 @@ describe('MindmapCore', () => {
 
       expect(glyphText('a')).toBe('');
       expect(glyphText('a1')).toBe('ⓘ');
+    });
+  });
+
+  describe('semantic node colors', () => {
+    it('uses a valid callback color for body, halo, and outline', () => {
+      const graph: MindmapGraph = {
+        nodes: [{ id: 'root', label: 'Root', metadata: { kind: 'arc_request' } }],
+        edges: [],
+      };
+      core = createDetachedCore(graph, {
+        getNodeColorFn: () => (node) =>
+          node.metadata?.['kind'] === 'arc_request' ? '#E46632' : undefined,
+      });
+
+      (core as any).render();
+
+      const node = (core as any).g.select('g.node');
+      expect(node.select('circle.body').attr('fill')).toBe('#e46632');
+      expect(node.select('circle.halo').attr('stroke')).toBe('#e46632');
+      expect(node.select('circle.body').attr('stroke')).toBe('#ff7e3e');
+    });
+
+    const fallbackCallbacks: [string, NodeColorFn | undefined][] = [
+      ['missing', undefined],
+      ['undefined-returning', () => undefined],
+      ['invalid', () => 'not-a-color'],
+      ['throwing', () => { throw new Error('consumer failure'); }],
+    ];
+
+    it.each(fallbackCallbacks)('falls back to depth color for a %s callback', (_case, colorFn) => {
+      core = createDetachedCore(sampleGraph, {
+        getNodeColorFn: colorFn ? () => colorFn as NodeColorFn : undefined,
+      });
+      (core as any).render();
+      expect((core as any).g.select('g.node circle.body').attr('fill')).toBe('#7c6af7');
+    });
+
+    it('keeps a callback color after setData and setTheme redraws', () => {
+      const graph: MindmapGraph = {
+        nodes: [{ id: 'root', label: 'Root', metadata: { kind: 'arc_request' } }],
+        edges: [],
+      };
+      core = createDetachedCore(graph, {
+        getNodeColorFn: () => (node) =>
+          node.metadata?.['kind'] === 'arc_request' ? '#E46632' : undefined,
+      });
+
+      (core as any).render();
+      core.setData({
+        ...graph,
+        nodes: [{ ...graph.nodes[0], label: 'Renamed root' }],
+      });
+      core.setTheme('light');
+
+      const node = (core as any).g.select('g.node');
+      expect(node.select('circle.body').attr('fill')).toBe('#e46632');
+      expect(node.select('circle.halo').attr('stroke')).toBe('#e46632');
+    });
+
+    it('uses the callback color for incident links on hover', () => {
+      vi.useFakeTimers();
+      const graph: MindmapGraph = {
+        nodes: [
+          { id: 'root', label: 'Root', metadata: { kind: 'arc_request' } },
+          { id: 'child', label: 'Child' },
+        ],
+        edges: [{ source: 'root', target: 'child' }],
+      };
+      core = createDetachedCore(graph, {
+        getNodeColorFn: () => (node) =>
+          node.metadata?.['kind'] === 'arc_request' ? '#E46632' : undefined,
+      });
+
+      (core as any).render();
+      const transitionSpy = vi.spyOn(d3.selection.prototype, 'transition')
+        .mockImplementation(function (this: d3.Selection<d3.BaseType, unknown, null, undefined>) {
+          return { duration: () => this } as any;
+        });
+
+      const root = (core as any).g.selectAll('g.node')
+        .filter((node: D3GraphNode) => node.id === 'root')
+        .node() as SVGGElement;
+
+      try {
+        root.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+        vi.advanceTimersByTime(150);
+
+        expect((core as any).g.select('line').attr('stroke')).toBe('#e46632');
+      } finally {
+        transitionSpy.mockRestore();
+        vi.useRealTimers();
+      }
     });
   });
 

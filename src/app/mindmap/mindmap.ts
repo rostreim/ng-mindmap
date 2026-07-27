@@ -11,7 +11,7 @@ import {
   input,
   signal,
 } from '@angular/core';
-import { MindmapGraph, MenuEntry, ContextMenuFn, NodeClickFn } from './mindmap.model';
+import { MindmapGraph, MenuEntry, ContextMenuFn, NodeClickFn, NodeColorFn } from './mindmap.model';
 import { MindmapCore, MindmapCoreOptions, MindmapTheme, MindmapLayout } from './mindmap-core';
 import { ContextMenuCloseReason, ContextMenuComponent } from './context-menu';
 
@@ -53,6 +53,7 @@ export class MindmapComponent implements OnInit, OnDestroy {
   readonly theme = input<MindmapTheme>('dark');
   readonly contextMenuFn = input<ContextMenuFn>();
   readonly nodeClickFn = input<NodeClickFn>();
+  readonly nodeColorFn = input<NodeColorFn>();
   readonly ariaLabel = input('Mind map');
   readonly layoutMode = input<MindmapLayout>('force');
   readonly collapseMode = input<'global' | 'per-edge'>('global');
@@ -117,6 +118,7 @@ export class MindmapComponent implements OnInit, OnDestroy {
       getEdgeDirection: () => this.edgeDirection(),
       getContextMenuFn: () => this.contextMenuFn(),
       getNodeClickFn: () => this.nodeClickFn(),
+      getNodeColorFn: () => this.nodeColorFn(),
       onOpenContextMenu: (entries, x, y) => {
         this.menuEntries.set(entries);
         this.menuX.set(x);

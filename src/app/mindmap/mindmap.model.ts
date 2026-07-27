@@ -5,7 +5,10 @@ import type { SimulationNodeDatum, SimulationLinkDatum } from 'd3';
 export interface MindmapGraphNode {
   id: string;
   label: string;
+  metadata?: Record<string, unknown>;
 }
+
+export type NodeColorFn = (node: MindmapGraphNode) => string | undefined;
 
 export interface MindmapGraphEdge {
   /** Defaults to `${source}->${target}` if omitted — see buildGraph(). */

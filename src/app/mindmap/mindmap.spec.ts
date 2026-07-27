@@ -85,6 +85,14 @@ describe('MindmapComponent (wiring)', () => {
     expect(coreStub.setData).toHaveBeenCalledWith(updated);
   });
 
+  it('forwards nodeColorFn through a live-read core option', () => {
+    const colorFn = () => '#E46632';
+    fixture.componentRef.setInput('nodeColorFn', colorFn);
+    fixture.detectChanges();
+
+    expect(capturedOptions.getNodeColorFn?.()).toBe(colorFn);
+  });
+
   it('resetView()/zoomToFit() delegate to the core', () => {
     component.resetView();
     component.zoomToFit();
