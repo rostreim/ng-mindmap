@@ -1,6 +1,13 @@
 import * as d3 from 'd3';
 import { MindmapCore, MindmapCoreOptions } from './mindmap-core';
-import { D3GraphNode, MindmapGraph, NodeColorFn } from './mindmap.model';
+import {
+  D3GraphEdge,
+  D3GraphNode,
+  MindmapGraph,
+  MindmapGraphNode,
+  NodeColorFn,
+  NodeEmphasisFn,
+} from './mindmap.model';
 
 describe('MindmapCore', () => {
   let core: MindmapCore;
@@ -286,6 +293,354 @@ describe('MindmapCore', () => {
       } finally {
         transitionSpy.mockRestore();
         vi.useRealTimers();
+      }
+    });
+  });
+
+  describe('node emphasis', () => {
+    const emphasisGraph: MindmapGraph = {
+      nodes: [
+        { id: 'root', label: 'Root', metadata: { kind: 'arc_request' } },
+        { id: 'fact', label: 'Fact', metadata: { kind: 'request_fact' } },
+        { id: 'attachment', label: 'Attachment', metadata: { kind: 'attachment' } },
+      ],
+      edges: [
+        { source: 'root', target: 'fact' },
+        { source: 'root', target: 'attachment' },
+      ],
+      entryNodeId: 'root',
+    };
+    const factPredicate: NodeEmphasisFn =
+      (node: MindmapGraphNode) => node.metadata?.['kind'] === 'request_fact';
+    let transitionSpy: ReturnType<typeof vi.spyOn>;
+    let transitionDurations: number[];
+    let transitionNames: (string | undefined)[];
+
+    function nodeSelection(id: string): d3.Selection<SVGGElement, D3GraphNode, SVGGElement, unknown> {
+      const graph = (core as any).g as d3.Selection<SVGGElement, unknown, null, undefined>;
+      return graph.select<SVGGElement>('.nodes')
+        .selectAll<SVGGElement, D3GraphNode>('g.node')
+        .filter((node: D3GraphNode) => node.id === id);
+    }
+
+    function edgeSelection(id: string): d3.Selection<SVGLineElement, D3GraphEdge, SVGGElement, unknown> {
+      const graph = (core as any).g as d3.Selection<SVGGElement, unknown, null, undefined>;
+      return graph.select<SVGGElement>('.links')
+        .selectAll<SVGLineElement, D3GraphEdge>('line')
+        .filter((edge) => edge.id === id);
+    }
+
+    function nodeOpacity(id: string): string {
+      return nodeSelection(id).attr('opacity');
+    }
+
+    function edgeAttr(id: string, name: string): string {
+      return edgeSelection(id).attr(name);
+    }
+
+    function allNodeOpacities(): string[] {
+      return (core as any).g.select('.nodes').selectAll('g.node').nodes()
+        .map((node: Element) => node.getAttribute('opacity') ?? '');
+    }
+
+    function allEdgeOpacities(): string[] {
+      return (core as any).g.select('.links').selectAll('line').nodes()
+        .map((edge: Element) => edge.getAttribute('stroke-opacity') ?? '');
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      transitionDurations = [];
+      transitionNames = [];
+      transitionSpy = vi.spyOn(d3.selection.prototype, 'transition')
+        .mockImplementation(function (
+          this: d3.Selection<d3.BaseType, unknown, null, undefined>,
+          ...args: unknown[]
+        ) {
+          transitionNames.push(typeof args[0] === 'string' ? args[0] : undefined);
+          return {
+            duration: (duration: number) => {
+              transitionDurations.push(duration);
+              return this;
+            },
+          } as any;
+        });
+      core = createDetachedCore(emphasisGraph, {
+        getNodeColorFn: () => (node) =>
+          node.metadata?.['kind'] === 'request_fact' ? '#2E8B57' : undefined,
+      });
+      (core as any).render();
+    });
+
+    afterEach(() => {
+      core.destroy();
+      transitionSpy.mockRestore();
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    });
+
+    it('emphasizes matching nodes and incident edges, then restores theme opacity when cleared', () => {
+      core.setNodeEmphasis(factPredicate);
+      vi.advanceTimersByTime(150);
+
+      expect(nodeOpacity('fact')).toBe('1');
+      expect(nodeOpacity('root')).toBe('0.15');
+      expect(nodeOpacity('attachment')).toBe('0.15');
+      expect(edgeAttr('root->fact', 'stroke-opacity')).toBe(String((core as any).tc.edgeOpacity));
+      expect(edgeAttr('root->attachment', 'stroke-opacity')).toBe('0.08');
+
+      core.setNodeEmphasis(undefined);
+      vi.advanceTimersByTime(150);
+
+      expect(allNodeOpacities()).toEqual(['1', '1', '1']);
+      expect(allEdgeOpacities()).toEqual([
+        String((core as any).tc.edgeOpacity),
+        String((core as any).tc.edgeOpacity),
+      ]);
+    });
+
+    it('dims every node and edge when the emphasis predicate matches no nodes', () => {
+      core.setNodeEmphasis(() => false);
+      vi.advanceTimersByTime(150);
+
+      expect(allNodeOpacities()).toEqual(['0.15', '0.15', '0.15']);
+      expect(allEdgeOpacities()).toEqual(['0.08', '0.08']);
+    });
+
+    it('treats a throwing emphasis predicate as a non-match', () => {
+      core.setNodeEmphasis(() => {
+        throw new Error('consumer failure');
+      });
+
+      expect(allNodeOpacities()).toEqual(['0.15', '0.15', '0.15']);
+      expect(allEdgeOpacities()).toEqual(['0.08', '0.08']);
+    });
+
+    it('is safe before the first render', () => {
+      const unrendered = createDetachedCore(emphasisGraph);
+
+      expect(() => unrendered.setNodeEmphasis(factPredicate)).not.toThrow();
+    });
+
+    it('preserves emphasis across setData and setTheme redraws', () => {
+      core.setNodeEmphasis(factPredicate);
+
+      core.setData({
+        ...emphasisGraph,
+        nodes: emphasisGraph.nodes.map((node) => ({ ...node, label: `${node.label} updated` })),
+      });
+      expect(nodeOpacity('fact')).toBe('1');
+      expect(nodeOpacity('root')).toBe('0.15');
+      expect(nodeOpacity('attachment')).toBe('0.15');
+
+      core.setTheme('light');
+      expect(nodeOpacity('fact')).toBe('1');
+      expect(nodeOpacity('root')).toBe('0.15');
+      expect(nodeOpacity('attachment')).toBe('0.15');
+    });
+
+    it('does not change focus, node positions, or invoke camera APIs', () => {
+      const nodes: D3GraphNode[] = (core as any).allNodes;
+      nodes[0].x = 11;
+      nodes[0].y = 22;
+      nodes[1].x = 33;
+      nodes[1].y = 44;
+      const positions = nodes.map(({ id, x, y }) => ({ id, x, y }));
+      const focusedNodeId = (core as any).focusedNodeId;
+      const moveFocusSpy = vi.spyOn(core as any, 'moveFocusTo');
+      const resetViewSpy = vi.spyOn(core, 'resetView');
+      const zoomToFitSpy = vi.spyOn(core, 'zoomToFit');
+      const zoomToNodeSpy = vi.spyOn(core, 'zoomToNode');
+
+      core.setNodeEmphasis(factPredicate);
+
+      expect((core as any).focusedNodeId).toBe(focusedNodeId);
+      expect(nodes.map(({ id, x, y }) => ({ id, x, y }))).toEqual(positions);
+      expect(moveFocusSpy).not.toHaveBeenCalled();
+      expect(resetViewSpy).not.toHaveBeenCalled();
+      expect(zoomToFitSpy).not.toHaveBeenCalled();
+      expect(zoomToNodeSpy).not.toHaveBeenCalled();
+    });
+
+    it('composes matching-node hover with included and excluded edge styles', () => {
+      core.setNodeEmphasis(factPredicate);
+      const fact = nodeSelection('fact').node()!;
+
+      fact.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+      vi.advanceTimersByTime(150);
+
+      expect(edgeAttr('root->fact', 'stroke-opacity')).toBe('1');
+      expect(edgeAttr('root->fact', 'stroke-width')).toBe('2');
+      expect(edgeAttr('root->fact', 'stroke')).toBe('#2e8b57');
+      expect(edgeAttr('root->attachment', 'stroke-opacity')).toBe('0.08');
+
+      fact.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+      vi.advanceTimersByTime(150);
+
+      expect(edgeAttr('root->fact', 'stroke-opacity')).toBe(String((core as any).tc.edgeOpacity));
+      expect(edgeAttr('root->attachment', 'stroke-opacity')).toBe('0.08');
+    });
+
+    it('keeps an excluded edge dim when its non-matching node is hovered', () => {
+      core.setNodeEmphasis(factPredicate);
+      const attachment = nodeSelection('attachment').node()!;
+
+      attachment.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+      vi.advanceTimersByTime(150);
+
+      expect(edgeAttr('root->attachment', 'stroke-opacity')).toBe('0.08');
+      expect(edgeAttr('root->attachment', 'stroke-width')).toBe('1.5');
+      expect(edgeAttr('root->fact', 'stroke-opacity')).toBe('0.15');
+    });
+
+    it('keeps excluded edges dim while ArrowDown and ArrowUp change the outgoing edge cursor', () => {
+      const root = (core as any).allNodes.find((node: D3GraphNode) => node.id === 'root');
+      (core as any).shape = 'graph';
+      core.setNodeEmphasis(factPredicate);
+
+      (core as any).onNodeKeydown({ key: 'ArrowDown', preventDefault: () => {} } as KeyboardEvent, root);
+      vi.advanceTimersByTime(150);
+
+      expect(edgeAttr('root->attachment', 'stroke-opacity')).toBe('0.08');
+      expect(edgeAttr('root->attachment', 'stroke-width')).toBe('1.5');
+      expect(edgeAttr('root->fact', 'stroke-opacity')).toBe('0.15');
+
+      (core as any).onNodeKeydown({ key: 'ArrowUp', preventDefault: () => {} } as KeyboardEvent, root);
+      vi.advanceTimersByTime(150);
+
+      expect(edgeAttr('root->fact', 'stroke-opacity')).toBe('1');
+      expect(edgeAttr('root->fact', 'stroke-width')).toBe('2');
+      expect(edgeAttr('root->fact', 'stroke')).toBe('#7c6af7');
+      expect(edgeAttr('root->attachment', 'stroke-opacity')).toBe('0.08');
+    });
+
+    it('lets pointer hover take over after keyboard edge navigation', () => {
+      const root = (core as any).allNodes.find((node: D3GraphNode) => node.id === 'root');
+      const fact = nodeSelection('fact').node()!;
+      (core as any).shape = 'graph';
+      core.setNodeEmphasis(factPredicate);
+      (core as any).onNodeKeydown({ key: 'ArrowDown', preventDefault: () => {} } as KeyboardEvent, root);
+
+      fact.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+      vi.advanceTimersByTime(150);
+
+      expect((core as any).highlightedOutgoingEdgeId).toBeNull();
+      expect(edgeAttr('root->fact', 'stroke-opacity')).toBe('1');
+      expect(edgeAttr('root->fact', 'stroke-width')).toBe('2');
+      expect(edgeAttr('root->fact', 'stroke')).toBe('#2e8b57');
+      expect(edgeAttr('root->attachment', 'stroke-opacity')).toBe('0.08');
+    });
+
+    it('clears keyboard edge navigation when data changes', () => {
+      const root = (core as any).allNodes.find((node: D3GraphNode) => node.id === 'root');
+      (core as any).shape = 'graph';
+      core.setNodeEmphasis(factPredicate);
+      (core as any).onNodeKeydown({ key: 'ArrowDown', preventDefault: () => {} } as KeyboardEvent, root);
+
+      core.setData({ ...emphasisGraph });
+
+      expect((core as any).highlightedOutgoingEdgeId).toBeNull();
+      expect(edgeAttr('root->fact', 'stroke-opacity')).toBe(String((core as any).tc.edgeOpacity));
+      expect(edgeAttr('root->attachment', 'stroke-opacity')).toBe('0.08');
+    });
+
+    it('does not restore a keyboard edge highlight after that edge disappears and returns', () => {
+      const root = (core as any).allNodes.find((node: D3GraphNode) => node.id === 'root');
+      (core as any).shape = 'graph';
+      core.setNodeEmphasis(factPredicate);
+      (core as any).onNodeKeydown({ key: 'ArrowDown', preventDefault: () => {} } as KeyboardEvent, root);
+
+      (core as any).toggleCollapse(root);
+      expect((core as any).highlightedOutgoingEdgeId).toBeNull();
+      (core as any).toggleCollapse(root);
+
+      expect(edgeAttr('root->fact', 'stroke-opacity')).toBe(String((core as any).tc.edgeOpacity));
+      expect(edgeAttr('root->attachment', 'stroke-opacity')).toBe('0.08');
+    });
+
+    it('uses named zero-duration interaction transitions for reduced-motion keyboard navigation', () => {
+      const root = (core as any).allNodes.find((node: D3GraphNode) => node.id === 'root');
+      (core as any).shape = 'graph';
+      vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
+      transitionDurations = [];
+      transitionNames = [];
+
+      (core as any).onNodeKeydown({ key: 'ArrowDown', preventDefault: () => {} } as KeyboardEvent, root);
+
+      expect(transitionNames).toEqual(['interaction', 'interaction']);
+      expect(transitionDurations).toEqual([0, 0]);
+    });
+
+    it('retains existing hover behavior when no emphasis predicate is active', () => {
+      const fact = nodeSelection('fact').node()!;
+
+      fact.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+      vi.advanceTimersByTime(150);
+
+      expect(edgeAttr('root->fact', 'stroke-opacity')).toBe('1');
+      expect(edgeAttr('root->fact', 'stroke-width')).toBe('2');
+      expect(edgeAttr('root->attachment', 'stroke-opacity')).toBe('0.15');
+
+      fact.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+      vi.advanceTimersByTime(150);
+
+      expect(allEdgeOpacities()).toEqual([
+        String((core as any).tc.edgeOpacity),
+        String((core as any).tc.edgeOpacity),
+      ]);
+    });
+
+    it('uses zero-duration interaction transitions when reduced motion is preferred', () => {
+      vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
+      transitionDurations = [];
+
+      core.setNodeEmphasis(factPredicate);
+
+      expect(transitionDurations).toEqual([0, 0]);
+    });
+
+    it('does not interrupt radial position transitions when reapplying styles after redraw', async () => {
+      transitionSpy.mockRestore();
+      vi.useRealTimers();
+      core.destroy();
+      (core as any).layoutMode = 'radial';
+      const originalTransform = Object.getOwnPropertyDescriptor(SVGElement.prototype, 'transform');
+      Object.defineProperty(SVGElement.prototype, 'transform', {
+        configurable: true,
+        get: function (this: SVGElement) {
+          const element = this;
+          return {
+            baseVal: {
+              consolidate: () => {
+                const match = /^translate\(([^,]+),([^)]+)\)$/.exec(element.getAttribute('transform') ?? '');
+                if (!match) return null;
+                return {
+                  matrix: {
+                    a: 1, b: 0, c: 0, d: 1,
+                    e: Number(match[1]), f: Number(match[2]),
+                  },
+                };
+              },
+            },
+          };
+        },
+      });
+
+      try {
+        core.setNodeEmphasis(factPredicate);
+        (core as any).redraw();
+        await new Promise((resolve) => setTimeout(resolve, 450));
+
+        const fact = (core as any).visibleNodes.find((node: D3GraphNode) => node.id === 'fact');
+        expect(nodeSelection('fact').attr('transform')).toBe(`translate(${fact.targetX}, ${fact.targetY})`);
+        expect(edgeAttr('root->fact', 'x2')).toBe(String(fact.targetX));
+        expect(edgeAttr('root->fact', 'y2')).toBe(String(fact.targetY));
+      } finally {
+        if (originalTransform) {
+          Object.defineProperty(SVGElement.prototype, 'transform', originalTransform);
+        } else {
+          delete (SVGElement.prototype as any).transform;
+        }
       }
     });
   });
